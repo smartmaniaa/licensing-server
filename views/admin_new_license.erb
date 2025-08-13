@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Criar Nova Licença - SmartManiaa</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 2em; background-color: #f4f6f8; color: #333; }
+    .container { max-width: 800px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
+    h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+    .form-group { margin-bottom: 1.5em; }
+    label { display: block; margin-bottom: 0.5em; font-weight: bold; }
+    input[type="email"], select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+    .checkbox-group label { font-weight: normal; }
+    .checkbox-group { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+    .checkbox-group div { min-width: 220px; }
+    button { background-color: #28a745; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; }
+    button:hover { opacity: 0.9; }
+    .back-link { display: inline-block; margin-bottom: 2em; color: #3498db; text-decoration: none; }
+    .back-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="/admin" class="back-link">&larr; Voltar para a lista</a>
+    <h1>Criar Nova Licença Manualmente</h1>
+    <!--
+      OBS: O processamento do formulário no backend (rota POST /admin/create) 
+           deve chamar agora License.provision_license, exemplo:
+
+        family = License.find_family_by_sku(product_skus.first)
+        license_id, key, is_new = License.provision_license(
+          email: email,
+          family: family,
+          product_skus: product_skus,
+          origin: origin,
+          status: 'active'
+        )
+    -->
+    <form action="/admin/create" method="post" autocomplete="off">
+      <div class="form-group">
+        <label for="email">Email do Cliente</label>
+        <input type="email" id="email" name="email" required autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label>Produtos a Incluir (Entitlements)</label>
+        <div class="checkbox-group">
+          <% @products.each do |product| %>
+            <div>
+              <input type="checkbox" name="product_skus[]" value="<%= product['sku'] %>" id="product_<%= product['sku'] %>">
+              <label for="product_<%= product['sku'] %>"><%= product['name'] %></label>
+            </div>
+          <% end %>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="origin">Origem da Licença</label>
+        <select id="origin" name="origin">
+          <option value="manual">Manual</option>
+          <option value="beta">Beta Tester</option>
+          <option value="youtuber">Youtuber/Parceiro</option>
+          <option value="suporte">Suporte</option>
+        </select>
+      </div>
+      <button type="submit">Criar Licença</button>
+    </form>
+  </div>
+</body>
+</html>

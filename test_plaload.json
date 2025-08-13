@@ -1,0 +1,129 @@
+{
+    "id": "evt_1RtwL3Eie4iwFwV12VmPVpz7",
+    "object": "event",
+    "api_version": "2025-06-30.basil",
+    "created": 1754682749,
+    "data": {
+        "object": {
+            "id": "cs_test_a1nrPyburZ3v0Bu7YM1Tez3w7TsR9r00w7gAfsnamupEbVQohtC0DN1eem",
+            "object": "checkout.session",
+            "adaptive_pricing": null,
+            "after_expiration": null,
+            "allow_promotion_codes": false,
+            "amount_subtotal": 599,
+            "amount_total": 599,
+            "automatic_tax": {
+                "enabled": false,
+                "liability": null,
+                "provider": null,
+                "status": null
+            },
+            "billing_address_collection": "auto",
+            "cancel_url": "https://stripe.com",
+            "client_reference_id": null,
+            "client_secret": null,
+            "collected_information": {
+                "shipping_details": null
+            },
+            "consent": null,
+            "consent_collection": {
+                "payment_method_reuse_agreement": null,
+                "promotions": "none",
+                "terms_of_service": "none"
+            },
+            "created": 1754682722,
+            "currency": "usd",
+            "currency_conversion": null,
+            "custom_fields": [],
+            "custom_text": {
+                "after_submit": null,
+                "shipping_address": null,
+                "submit": null,
+                "terms_of_service_acceptance": null
+            },
+            "customer": "cus_SpbYdBJBVaT7hW",
+            "customer_creation": "if_required",
+            "customer_details": {
+                "address": {
+                    "city": null,
+                    "country": "BR",
+                    "line1": null,
+                    "line2": null,
+                    "postal_code": null,
+                    "state": null
+                },
+                "email": "leonardo@maniaa.com.br",
+                "name": "333",
+                "phone": null,
+                "tax_exempt": "none",
+                "tax_ids": []
+            },
+            "customer_email": null,
+            "discounts": [],
+            "expires_at": 1754769122,
+            "invalid_payment_methods_hash": {
+                "transfers": {
+                    "message": "dynamic_payment_methods_capability_not_present"
+                }
+            },
+            "invoice": "in_1RtwKyEie4iwFwV1lki7hg07",
+            "invoice_creation": null,
+            "livemode": false,
+            "locale": "auto",
+            "metadata": {},
+            "mode": "subscription",
+            "origin_context": null,
+            "payment_intent": null,
+            "payment_link": "plink_1Rtr7jEie4iwFwV1ihYVIrF6",
+            "payment_method_collection": "always",
+            "payment_method_configuration_details": {
+                "id": "pmc_1Rlz9REie4iwFwV1Q4o5KGR0",
+                "parent": null
+            },
+            "payment_method_options": {
+                "card": {
+                    "request_three_d_secure": "automatic"
+                }
+            },
+            "payment_method_types": [
+                "card"
+            ],
+            "payment_status": "paid",
+            "permissions": null,
+            "phone_number_collection": {
+                "enabled": false
+            },
+            "recovered_from": null,
+            "saved_payment_method_options": {
+                "allow_redisplay_filters": [
+                    "always"
+                ],
+                "payment_method_remove": "disabled",
+                "payment_method_save": null
+            },
+            "setup_intent": null,
+            "shipping_address_collection": null,
+            "shipping_cost": null,
+            "shipping_options": [],
+            "status": "complete",
+            "submit_type": "auto",
+            "subscription": "sub_1RtwL0Eie4iwFwV1qTJgviN5",
+            "success_url": "https://stripe.com",
+            "total_details": {
+                "amount_discount": 0,
+                "amount_shipping": 0,
+                "amount_tax": 0
+            },
+            "ui_mode": "hosted",
+            "url": null,
+            "wallet_options": null
+        }
+    },
+    "livemode": false,
+    "pending_webhooks": 1,
+    "request": {
+        "id": null,
+        "idempotency_key": null
+    },
+    "type": "checkout.session.completed"
+}

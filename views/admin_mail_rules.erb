@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Gestão de E-mails Transacionais</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 2em; background-color: #f4f6f8;}
+    .container { max-width: 1100px; margin: 0 auto; background-color: #fff; padding: 2em; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.07);}
+    h1 { color: #2c3e50;}
+    table { width: 100%; border-collapse: collapse; margin-top: 2em;}
+    th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd;}
+    th { background-color: #3498db; color: white;}
+    tr.inativo { background: #fbeee0;}
+    tr.ativo { background: #eafbea;}
+    .btn { padding: 6px 16px; border: none; border-radius: 5px; cursor: pointer;}
+    .btn-edit { background: #2980b9; color: white;}
+    .btn-view { background: #95a5a6; color: white;}
+    .btn-ativar { background: #16a085; color: white;}
+    .btn-inativar { background: #e67e22; color: white;}
+    .btn-new { background: #2ecc71; color: white; float: right; margin-bottom: 20px;}
+    .chip { display:inline-block; background: #eee; color: #555; padding: 2px 14px; border-radius: 24px; font-size: .97em;}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Regras de E-mails Transacionais</h1>
+
+    <a href="/admin/emails/new" class="btn btn-new">+ Nova Regra de E-mail</a>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Tipo</th>
+          <th>Família</th>
+          <th>Assunto</th>
+          <th>Status</th>
+          <th>Última Atualização</th>
+          <th>Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if @email_rules.nil? || @email_rules.empty? %>
+          <tr>
+            <td colspan="6" style="text-align:center;">Nenhuma regra cadastrada ainda.</td>
+          </tr>
+        <% else %>
+          <% @email_rules.each do |rule| %>
+            <tr class="<%= rule['status'] ? 'ativo' : 'inativo' %>">
+              <td><span class="chip"><%= rule['type'].capitalize %></span></td>
+              <td><span class="chip"><%= rule['familia'] %></span></td>
+              <td><%= rule['subject'] %></td>
+              <td>
+                <% if rule['status'] %>
+                  <span style="color: #11b651;"><strong>Ativo</strong></span>
+                <% else %>
+                  <span style="color: #d35400;"><strong>Inativo</strong></span>
+                <% end %>
+              </td>
+              <td>
+                <%= rule['updated_at'] ? Time.parse(rule['updated_at']).strftime('%d/%m/%Y %H:%M') : '-' %>
+              </td>
+              <td>
+                <a href="/admin/emails/<%= rule['id'] %>/edit" class="btn btn-edit">Editar</a>
+                <a href="/admin/emails/<%= rule['id'] %>/view" class="btn btn-view">Preview</a>
+                <% if rule['status'] %>
+                  <form action="/admin/emails/<%= rule['id'] %>/deactivate" method="post" style="display:inline;">
+                    <button type="submit" class="btn btn-inativar" onclick="return confirm('Desativar esta regra?')">Desativar</button>
+                  </form>
+                <% else %>
+                  <form action="/admin/emails/<%= rule['id'] %>/activate" method="post" style="display:inline;">
+                    <button type="submit" class="btn btn-ativar" onclick="return confirm('Ativar esta regra?')">Ativar</button>
+                  </form>
+                <% end %>
+              </td>
+            </tr>
+          <% end %>
+        <% end %>
+      </tbody>
+    </table>
+    <p style="margin-top:2em;color:#888;font-size:.92em;">
+      <em>* As regras ativas são disparadas automaticamente para a família correspondente quando o evento ocorre (trial, compra, etc).</em>
+    </p>
+  </div>
+</body>
+</html>

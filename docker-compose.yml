@@ -1,0 +1,29 @@
+# ---- docker-compose.yml (Versão definitiva e comentada) ----
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: smartmaniaa_licensing_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: '@Rico5626'
+
+  web:
+    build: .
+    command: bundle exec puma -b 'tcp://0.0.0.0:9292'
+    volumes:
+      - .:/app
+    ports:
+      - "9292:9292"
+    depends_on:
+      - db
+    environment:
+      DATABASE_HOST: db
+    env_file:
+      - .env
+
+volumes:
+  postgres_data:

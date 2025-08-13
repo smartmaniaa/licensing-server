@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Gerenciar Produtos - SmartManiaa</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 2em; background-color: #f4f6f8; color: #333; }
+    .container { max-width: 1000px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
+    h1 { color: #2c3e50; }
+    .header { display: flex; justify-content: space-between; align-items: center; }
+    table { width: 100%; border-collapse: collapse; margin-top: 2em; }
+    th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; word-break: break-all; }
+    th { background-color: #3498db; color: white; }
+    tr:nth-child(even) { background-color: #f2f2f2; }
+    .back-link { display: inline-block; margin-bottom: 2em; color: #3498db; text-decoration: none; }
+    .back-link:hover { text-decoration: underline; }
+    .btn { background-color: #28a745; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; font-size: 14px; }
+    .btn-edit { background-color: #f39c12; }
+    .btn:hover { opacity: 0.9; }
+    .actions { display: flex; gap: 0.5em; }
+    .actions form { margin: 0; }
+    .btn-delete { background-color: #dc3545; border: none; cursor: pointer; color: white; padding: 5px 10px; border-radius: 5px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="/admin" class="back-link">&larr; Voltar ao Painel Principal</a>
+    <div class="header">
+      <h1>Gerenciar Produtos</h1>
+      <a href="/admin/products/new" class="btn">Adicionar Novo Produto</a>
+    </div>
+    <p>Aqui você pode editar os detalhes de cada produto e definir quais produtos compõem uma suite.</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Nome do Produto</th>
+          <th>SKU (ID Interno)</th>
+          <th>Família</th>
+          <th>Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if @products.num_tuples.zero? %>
+          <tr>
+            <td colspan="4" style="text-align: center;">Nenhum produto encontrado.</td>
+          </tr>
+        <% else %>
+          <% @products.each do |product| %>
+            <tr>
+              <td><%= product['name'] %></td>
+              <td><code><%= product['sku'] %></code></td>
+              <td><%= product['family'] %></td>
+              <td class="actions">
+                <a href="/admin/product/<%= product['sku'] %>/edit" class="btn btn-edit">Editar</a>
+                <form action="/admin/product/<%= product['sku'] %>/delete" method="post" onsubmit="return confirm('Tem certeza que deseja excluir este produto?');">
+                  <button type="submit" class="btn-delete">Excluir</button>
+                </form>
+              </td>
+            </tr>
+          <% end %>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Adicionar Novo Produto - SmartManiaa</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 2em; background-color: #f4f6f8; color: #333; }
+    .container { max-width: 800px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
+    h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+    .form-group { margin-bottom: 1.5em; }
+    label { display: block; margin-bottom: 0.5em; font-weight: bold; }
+    input[type="text"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+    button { background-color: #28a745; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; }
+    button:hover { opacity: 0.9; }
+    .back-link { display: inline-block; margin-bottom: 2em; color: #3498db; text-decoration: none; }
+    .back-link:hover { text-decoration: underline; }
+    .error-box { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; padding: 1em; margin-bottom: 1.5em; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="/admin/products" class="back-link">&larr; Voltar para a lista de produtos</a>
+    <h1>Adicionar Novo Produto</h1>
+
+    <% if @error %>
+      <div class="error-box">
+        <%= @error %>
+      </div>
+    <% end %>
+
+    <form action="/admin/products" method="post">
+      <div class="form-group">
+        <label for="sku">SKU do Produto (ID Interno Único, ex: smartgrid_axis)</label>
+        <input type="text" id="sku" name="sku" required>
+      </div>
+      <div class="form-group">
+        <label for="name">Nome do Produto (Ex: SmartGrid Axis)</label>
+        <input type="text" id="name" name="name" required>
+      </div>
+      <div class="form-group">
+        <label for="family">Família (Ex: smartgrid, smartfield)</label>
+        <input type="text" id="family" name="family" required>
+      </div>
+      <hr style="margin: 2em 0;">
+      <h4>Informações da Plataforma (Stripe)</h4>
+      <div class="form-group">
+        <label for="platform_id">ID de Preço do Stripe (Ex: price_test_...)</label>
+        <input type="text" id="platform_id" name="platform_id" required>
+      </div>
+      <div class="form-group">
+        <label for="purchase_link">Link de Compra (Ex: https://buy.stripe.com/...)</label>
+        <input type="text" id="purchase_link" name="purchase_link">
+      </div>
+
+      <button type="submit">Adicionar Produto</button>
+    </form>
+  </div>
+</body>
+</html>

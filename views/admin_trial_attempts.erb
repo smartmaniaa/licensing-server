@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Tentativas de Trial - SmartManiaa</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 2em; background-color: #f4f6f8; color: #333; }
+    .container { max-width: 1100px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
+    h1 { color: #2c3e50; }
+    table { width: 100%; border-collapse: collapse; margin-top: 2em; }
+    th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; }
+    th { background-color: #e67e22; color: white; }
+    tr:nth-child(even) { background-color: #f2f2f2; }
+    .back-link { display: inline-block; margin-bottom: 2em; color: #3498db; text-decoration: none; }
+    .back-link:hover { text-decoration: underline; }
+    .export-btn { background-color: #2ecc71; color: white; padding: 8px 18px; border: none; border-radius: 5px; cursor: pointer; margin-bottom: 1.5em; }
+    .export-btn:hover { opacity: 0.95; }
+    .clear-btn { background-color: #e74c3c; color: white; padding: 8px 18px; border: none; border-radius: 5px; cursor: pointer; margin-bottom: 1.5em; margin-left: 14px; }
+    .clear-btn:hover { opacity: 0.95; }
+    .section-title { margin-top: 3em; color: #d35400; }
+    .action-btns { float: right; }
+    .notice {
+      margin-bottom:15px;padding:10px 16px;
+      background:#daf6e6;color:#207044;
+      border-radius:4px;border:1px solid #b4e5cd;
+    }
+    @media (max-width: 700px) {
+      .container { padding: .7em; }
+      th, td { padding: 7px 6px; font-size: 12px; }
+      .section-title { margin-top: 2em; font-size:1.2em;}
+    }
+  </style>
+  <script>
+    function exportCsv() {
+      let rows = Array.from(document.querySelectorAll(".detailed-table tbody tr")).filter(r => !r.querySelector("td[colspan]"));
+      let csv = "Email,MAC Address,Produto,Motivo,Data\n" +
+        rows.map(row =>
+          Array.from(row.querySelectorAll('td')).map(td => `"${td.innerText.replace(/"/g,'""')}"`).join(',')
+        ).join('\n');
+      let blob = new Blob([csv], { type: "text/csv" });
+      let link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "tentativas_trial_negadas.csv";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  </script>
+</head>
+<body>
+  <div class="container">
+    <a href="/admin" class="back-link">&larr; Voltar ao Painel Principal</a>
+
+    <% if session[:notice] %>
+      <div class="notice">
+        <%= session.delete(:notice) %>
+      </div>
+    <% end %>
+
+    <h1>Tentativas de Trial Negadas</h1>
+    <div class="action-btns">
+      <button class="export-btn" onclick="exportCsv()">Exportar para CSV</button>
+      <form id="clearForm" action="/admin/trials/clear" method="post" style="display:inline;">
+        <button type="submit" class="clear-btn"
+          onclick="return confirm('Tem certeza que deseja apagar TODOS os registros de tentativas negadas? Esta ação não pode ser desfeita.');">
+          Limpar todos os dados
+        </button>
+      </form>
+    </div>
+    <div style="clear:both"></div>
+    <p>Esta lista mostra todos os usuários que tentaram iniciar um trial mas foram bloqueados porque o e-mail ou a máquina já estavam registrados.</p>
+    
+    <h2 class="section-title">Top E-mails com Tentativas Negadas</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Total de Tentativas Negadas</th>
+          <th>Última Tentativa</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if @top_email_counters.num_tuples.zero? %>
+          <tr><td colspan="3" style="text-align:center;">Nenhum registro encontrado.</td></tr>
+        <% else %>
+          <% @top_email_counters.each do |row| %>
+            <tr>
+              <td><%= row['email'] %></td>
+              <td><%= row['attempts'] %></td>
+              <td><%= Time.parse(row['last_attempt_at']).strftime('%d/%m/%Y %H:%M') rescue "" %></td>
+            </tr>
+          <% end %>
+        <% end %>
+      </tbody>
+    </table>
+
+    <h2 class="section-title">Top MACs com Tentativas Negadas</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>MAC Address</th>
+          <th>Total de Tentativas Negadas</th>
+          <th>Última Tentativa</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if @top_mac_counters.num_tuples.zero? %>
+          <tr><td colspan="3" style="text-align:center;">Nenhum registro encontrado.</td></tr>
+        <% else %>
+          <% @top_mac_counters.each do |row| %>
+            <tr>
+              <td><%= row['mac_address'] %></td>
+              <td><%= row['attempts'] %></td>
+              <td><%= Time.parse(row['last_attempt_at']).strftime('%d/%m/%Y %H:%M') rescue "" %></td>
+            </tr>
+          <% end %>
+        <% end %>
+      </tbody>
+    </table>
+
+    <h2 class="section-title">Detalhamento de Tentativas Negadas</h2>
+    <table class="detailed-table">
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>MAC Address</th>
+          <th>Produto Tentado</th>
+          <th>Motivo da Falha</th>
+          <th>Data</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if @attempts.num_tuples.zero? %>
+          <tr>
+            <td colspan="5" style="text-align: center;">Nenhuma tentativa de trial negada foi registrada.</td>
+          </tr>
+        <% else %>
+          <% @attempts.each do |attempt| %>
+            <tr>
+              <td><%= attempt['email'] %></td>
+              <td><%= attempt['mac_address'] %></td>
+              <td><%= attempt['product_sku'] %></td>
+              <td>
+              <% if attempt['reason'] == 'email' %>E-mail já usado
+              <% elsif attempt['reason'] == 'mac' %>MAC já usado
+              <% elsif attempt['reason'] == 'both_email_and_mac' %>E-mail e MAC já usados
+              <% elsif attempt['reason'] == 'already_used' %>Já utilizado
+              <% else %><%= attempt['reason'] %>
+              <% end %>
+              </td>
+              <td><%= Time.parse(attempt['attempted_at']).strftime('%d/%m/%Y %H:%M') %></td>
+            </tr>
+          <% end %>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>
