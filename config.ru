@@ -1,7 +1,10 @@
-require_relative 'server'
+require 'sinatra/base'
 
-# ESSENCIAL: previne o erro 'Host not permitted' no Render/Sinatra
-SmartManiaaApp.set :protection, false
-SmartManiaaApp.set :bind, '0.0.0.0'
+class TestApp < Sinatra::Base
+  set :protection, false
+  set :bind, '0.0.0.0'
 
-run SmartManiaaApp
+  get('/') { 'HELLO WORLD' }
+end
+
+run TestApp
