@@ -10,6 +10,12 @@ require_relative 'stripe_handler.rb'
 $stdout.sync = true
 
 class SmartManiaaApp < Sinatra::Base
+  # ======= AJUSTE ANTI-BLOQUEIO RENDER =======
+  set :bind, '0.0.0.0'
+  set :protection, false
+  disable :protection
+  # ===========================================
+
   before do
     puts "========= DEBUG HEADERS ========"
     puts "Host do request: #{request.host.inspect}"
@@ -21,7 +27,6 @@ class SmartManiaaApp < Sinatra::Base
   use Rack::MethodOverride
   enable :sessions
   set :session_secret, ENV.fetch("SESSION_SECRET", "c44e8293a0090265f725883a9c5ce960e58284695e84942a4981362a2b72f129")
-  disable :protection
 
   configure do
     retries = 5
@@ -57,6 +62,7 @@ class SmartManiaaApp < Sinatra::Base
       headers['WWW-Authenticate'] = 'Basic realm="Restricted Area"'
       halt 401, "Not authorized\n"
     end
+
     def authorized?
       @auth ||= Rack::Auth::Basic::Request.new(request.env)
       @auth.provided? and @auth.basic? and @auth.credentials and @auth.credentials == [ENV['ADMIN_USER'], ENV['ADMIN_PASSWORD']]
@@ -94,7 +100,6 @@ class SmartManiaaApp < Sinatra::Base
     family_skus = License.all_family_skus(family)
     expires_at = (Time.now + 7*24*60*60).strftime('%Y-%m-%d')
 
-    # ----------------- BLOQUEIO DE TRIAL DUPLICADO POR EMAIL ou MAC -----------------
     if License.trial_exists?(email: email, mac_address: mac_address, family: family)
       License.log_trial_denied(
         email: email,
@@ -102,11 +107,9 @@ class SmartManiaaApp < Sinatra::Base
         product_sku: product_sku,
         reason: "Trial já existe para este email ou MAC na família #{family}"
       )
-      # Opcional: Mailer.send_trial_denied(email) se quiser avisar o usuário
       halt 403, { error: "Trial já existe para este email ou MAC.", status: "denied" }.to_json
     end
 
-    # ----------------- SE NÃO EXISTIR, PROVISIONA O TRIAL -----------------
     result = License.provision_license(
       email: email,
       family: family,
@@ -127,6 +130,7 @@ class SmartManiaaApp < Sinatra::Base
     rescue JSON::ParserError
       halt 400, { error: 'Invalid JSON' }.to_json
     end
+
     validation_result = License.validate(
       key: params['license_key'],
       mac_address: params['mac_address'],
@@ -200,7 +204,6 @@ class SmartManiaaApp < Sinatra::Base
         platform_id: params['platform_id'],
         link: params['purchase_link']
       )
-      # --- AUTOMATIZAÇÃO stripe_price_id ---
       $db.exec_params(
         "UPDATE products SET stripe_price_id = $1 WHERE sku = $2",
         [params['platform_id'], params['sku']]
@@ -238,7 +241,6 @@ class SmartManiaaApp < Sinatra::Base
         platform_id: params['platform_id'],
         link: params['purchase_link']
       )
-      # --- AUTOMATIZAÇÃO stripe_price_id ---
       $db.exec_params(
         "UPDATE products SET stripe_price_id = $1 WHERE sku = $2",
         [params['platform_id'], product_sku]
