@@ -28,6 +28,7 @@ PLATFORMS
   x86_64-linux
 
 DEPENDENCIES
+  rack
   sinatra
 
 BUNDLED WITH
