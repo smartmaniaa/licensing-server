@@ -26,20 +26,26 @@ class SmartManiaaApp < Sinatra::Base
   configure do
     retries = 5
     begin
-      $db = PG.connect(
-        host: ENV['DATABASE_HOST'],
-        dbname: 'smartmaniaa_licensing_dev',
-        user: 'postgres',
-        password: ENV.fetch('DATABASE_PASSWORD', '@Rico5626')
-      )
-      puts "=> Conectado ao banco de dados DOCKER/LOCAL com sucesso!"
-    rescue PG::ConnectionBad => e
+      if ENV['DATABASE_URL'] # Render/cloud/local com URL pronta
+        $db = PG.connect(ENV['DATABASE_URL'], sslmode: 'require')
+        puts "=> Conectado ao banco de dados via DATABASE_URL (Render/cloud)!"
+      else # Dev local simples, ex: Docker Compose
+        $db = PG.connect(
+          host: ENV.fetch('DATABASE_HOST', 'localhost'),
+          dbname: ENV.fetch('DATABASE_NAME', 'smartmaniaa_licensing_dev'),
+          user: ENV.fetch('DATABASE_USER', 'postgres'),
+          password: ENV.fetch('DATABASE_PASSWORD', '@Rico5626')
+        )
+        puts "=> Conectado ao banco de dados local/Docker com sucesso!"
+      end
+    rescue PG::ConnectionBad, PG::Error => e
       retries -= 1
       if retries > 0
         puts "Falha ao conectar ao banco de dados. Tentando novamente em 5 segundos..."
         sleep 5
         retry
       else
+        puts "ERRO: Falha ao conectar ao banco de dados: #{e.message}"
         raise e
       end
     end
@@ -74,47 +80,45 @@ class SmartManiaaApp < Sinatra::Base
   end
 
   post '/start_trial' do
-  content_type :json
-  begin
-    params = JSON.parse(request.body.read)
-  rescue JSON::ParserError
-    halt 400, { error: 'Invalid JSON' }.to_json
+    content_type :json
+    begin
+      params = JSON.parse(request.body.read)
+    rescue JSON::ParserError
+      halt 400, { error: 'Invalid JSON' }.to_json
+    end
+
+    email = params['email']
+    mac_address = params['mac_address']
+    product_sku = params['product_sku']
+    family = License.find_family_by_sku(product_sku)
+    family_skus = License.all_family_skus(family)
+    expires_at = (Time.now + 7*24*60*60).strftime('%Y-%m-%d')
+
+    # ----------------- BLOQUEIO DE TRIAL DUPLICADO POR EMAIL ou MAC -----------------
+    if License.trial_exists?(email: email, mac_address: mac_address, family: family)
+      License.log_trial_denied(
+        email: email,
+        mac_address: mac_address,
+        product_sku: product_sku,
+        reason: "Trial já existe para este email ou MAC na família #{family}"
+      )
+      # Opcional: Mailer.send_trial_denied(email) se quiser avisar o usuário
+      halt 403, { error: "Trial já existe para este email ou MAC.", status: "denied" }.to_json
+    end
+
+    # ----------------- SE NÃO EXISTIR, PROVISIONA O TRIAL -----------------
+    result = License.provision_license(
+      email: email,
+      family: family,
+      product_skus: family_skus,
+      origin: 'trial',
+      status: 'trial',
+      expires_at: expires_at,
+      mac_address: mac_address,
+      grant_source: "trial_#{family}"
+    )
+    result.to_json
   end
-  email = params['email']
-  mac_address = params['mac_address']
-  product_sku = params['product_sku']
-
-  family = License.find_family_by_sku(product_sku)
-  family_skus = License.all_family_skus(family)
-  expires_at = (Time.now + 7*24*60*60).strftime('%Y-%m-%d')
-
-  # ----------------- BLOQUEIO DE TRIAL DUPLICADO POR EMAIL ou MAC -----------------
-   if License.trial_exists?(email: email, mac_address: mac_address, family: family)
-  License.log_trial_denied(
-    email: email,
-    mac_address: mac_address,
-    product_sku: product_sku,
-    reason: "Trial já existe para este email ou MAC na família #{family}"
-  )
-  # Opcional: Mailer.send_trial_denied(email) se quiser avisar o usuário
-  halt 403, { error: "Trial já existe para este email ou MAC.", status: "denied" }.to_json
- end
-
-
-  # ----------------- SE NÃO EXISTIR, PROVISIONA O TRIAL -----------------
-  result = License.provision_license(
-    email: email,
-    family: family,
-    product_skus: family_skus,
-    origin: 'trial',
-    status: 'trial',
-    expires_at: expires_at,
-    mac_address: mac_address,
-    grant_source: "trial_#{family}"
-  )
-  result.to_json
-end
-
 
   post '/validate' do
     content_type :json
@@ -360,23 +364,18 @@ end
     @families = $db.exec("SELECT DISTINCT name FROM families ORDER BY name ASC").map { |f| f['name'] }
     erb :admin_mail_rule_form
   end
-  
+
   # server.rb
-
   post '/stripe/webhook' do
-   payload = request.body.read
-   sig_header = request.env['HTTP_STRIPE_SIGNATURE']
-
-   # Fluxo principal usando o handler
-   status, headers, body = StripeHandler.handle_webhook(payload, sig_header)
-
-  # Sinatra espera a resposta assim:
-   status status
-   headers.each { |k, v| response[k] = v }
-   body body.join
- end
-
-
+    payload = request.body.read
+    sig_header = request.env['HTTP_STRIPE_SIGNATURE']
+    # Fluxo principal usando o handler
+    status, headers, body = StripeHandler.handle_webhook(payload, sig_header)
+    # Sinatra espera a resposta assim:
+    status status
+    headers.each { |k, v| response[k] = v }
+    body body.join
+  end
 end
 
 # --- Inicialização padrão para dev/local/Render ---
