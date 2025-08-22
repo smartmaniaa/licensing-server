@@ -169,11 +169,12 @@ class SmartManiaaApp < Sinatra::Base
 
   # --- ROTAS DO PAINEL DE ADMIN ---
   get '/admin' do
-    protected!
-    @licenses = License.filter(query: params['q'], origin: params['origin'])
-    @origins = $db.exec('SELECT DISTINCT origin FROM licenses WHERE origin IS NOT NULL ORDER BY origin').map { |row| row['origin'] }
-    erb :admin_dashboard
-  end
+   protected! # Verifica se o usuário está autenticado
+   puts "Acessando a rota /admin" # Adicione essa linha
+   @licenses = License.filter(query: params['q'], origin: params['origin'])
+   @origins = $db.exec('SELECT DISTINCT origin FROM licenses WHERE origin IS NOT NULL ORDER BY origin').map { |row| row['origin'] }
+   erb :admin_dashboard
+ end
 
   get '/admin/products' do
     protected!
