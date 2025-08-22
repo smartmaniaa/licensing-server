@@ -1,5 +1,5 @@
 require 'dotenv/load'
 require 'sinatra/base'
-class HelloApp < Sinatra::Base
+class ServerApp < Sinatra::Base
   get('/') { 'FUNCIONOU!' }
 end
