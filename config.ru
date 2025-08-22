@@ -3,8 +3,8 @@ if defined?(Rack::Request) && Rack::Request.const_defined?(:ALLOWED_HOSTS)
 end
 
 require './server'
+ServerApp.set :bind, '0.0.0.0'
+ServerApp.set :port, ENV['PORT'] || 9292
+ServerApp.set :environment, :production
 
-HelloApp.set :bind, '0.0.0.0'
-HelloApp.set :port, ENV['PORT'] || 9292
-HelloApp.set :environment, :production
 run ServerApp
