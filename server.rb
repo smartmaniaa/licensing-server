@@ -10,10 +10,8 @@ require_relative 'stripe_handler.rb'
 $stdout.sync = true
 
 class SmartManiaaApp < Sinatra::Base
-  # ======= AJUSTE ANTI-BLOQUEIO RENDER =======
+  # =======  =======
   set :bind, '0.0.0.0'
-  set :protection, false
-  disable :protection
   # ===========================================
 
   before do

@@ -1,24 +1,21 @@
-# ---- Dockerfile ----
-
-# Usar a imagem oficial do Ruby 3.3 como base
+# Imagem oficial Ruby moderna e segura
 FROM ruby:3.3
 
-# Instalar dependências essenciais do sistema operacional
-RUN apt-get update -qq && apt-get install -y build-essential
+# Instala libs de build essenciais (para gems nativas, como pg/nokogiri)
+RUN apt-get update -qq && apt-get install -y build-essential libpq-dev
 
-# Definir o diretório de trabalho padrão dentro do container
+# Define a pasta padrão do app
 WORKDIR /app
 
-# Copiar o Gemfile para o container e instalar as gems
-# Isso otimiza o cache, para não reinstalar tudo a cada pequena mudança no código
+# Copia Gemfile e Gemfile.lock (para otimizar camada de cache do bundle)
 COPY Gemfile Gemfile.lock ./
 RUN bundle install
 
-# Copiar o resto do código da nossa aplicação
+# Copia todo o restante do código
 COPY . .
 
-# Expor a porta que o Puma usa para o mundo exterior
+# Expõe a mesma porta do compose (9292)
 EXPOSE 9292
 
-# O comando padrão para executar quando o container iniciar
-CMD ["bundle", "exec", "puma"]
+# Entrypoint/CMD padrão (será sobrescrito pelo docker-compose, mas é boa prática deixar aqui também)
+CMD ["bundle", "exec", "puma", "-b", "tcp://0.0.0.0:9292"]

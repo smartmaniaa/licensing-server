@@ -5,5 +5,5 @@ gem "sinatra"
 gem "pg"
 gem "sendgrid-ruby"
 gem "stripe"
-gem "puma" # <-- ADICIONE ESTA LINHA
+gem "puma"
 gem 'dotenv'
