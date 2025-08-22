@@ -7,6 +7,6 @@ RUN bundle install
 
 COPY . .
 
-EXPOSE 9292
+EXPOSE 10000
 
-CMD ["bundle", "exec", "rackup", "-o", "0.0.0.0", "-p", "9292", "config.ru"]
+CMD ["bundle", "exec", "rackup", "-o", "0.0.0.0", "-p", "${PORT}", "config.ru"]
