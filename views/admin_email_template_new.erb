@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Criar Novo Template de E-mail - SmartManiaa</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 2em; background-color: #f4f6f8; color: #333; }
+    .container { max-width: 900px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
+    h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+    .back-link { display: inline-block; margin-bottom: 2em; color: #3498db; text-decoration: none; }
+    .form-group { margin-bottom: 1.5em; }
+    label { display: block; margin-bottom: 0.5em; font-weight: bold; }
+    input[type="text"], select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+    textarea { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; min-height: 300px; font-family: monospace; }
+    button { background-color: #28a745; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; }
+    .help-text { font-size: 0.9em; color: #666; margin-top: 5px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="/admin/families" class="back-link">&larr; Voltar para o Centro de Controle</a>
+    <h1>Criar Novo Template de E-mail</h1>
+    
+    <form action="/admin/email_templates" method="post">
+      <div class="form-group">
+        <label for="name">Nome Interno do Template</label>
+        <input type="text" id="name" name="name" placeholder="Ex: Lembrete de Trial Expirando" required>
+        <p class="help-text">Este nome é apenas para sua organização interna.</p>
+      </div>
+      <div class="form-group">
+        <label for="trigger_event">Gatilho (Evento do Sistema)</label>
+        <select id="trigger_event" name="trigger_event">
+            <optgroup label="Gatilhos Imediatos">
+              <option value="trial_started">Trial Iniciado</option>
+              <option value="subscription_started">Assinatura Iniciada</option>
+              <option value="admin_grant_created">Licença Nova Criada pelo Admin</option>
+              <option value="admin_grant_added">Direitos Adicionados pelo Admin</option>
+              <option value="trial_denied">Trial Negado</option>
+              <option value="payment_failed">Falha no Pagamento</option>
+              <option value="subscription_cancellation_scheduled">Cancelamento Agendado</option>
+              <option value="subscription_revoked">Assinatura Revogada</option>
+            </optgroup>
+            <optgroup label="Gatilhos Agendados (Via Tarefa Diária)">
+              <option value="trial_ending_in_3_days">Trial Vencendo em 3 Dias</option>
+              <option value="trial_expires_today">Trial Vence Hoje</option>
+              <option value="trial_expired_3_days_ago">Trial Vencido (3 dias atrás)</option>
+              <option value="trial_expired_7_days_ago">Trial Vencido (7 dias atrás)</option>
+              <option value="subscription_revoked_7_days_ago">Pós-Cancelamento (7 dias)</option>
+              <option value="subscription_revoked_30_days_ago">Pós-Cancelamento (30 dias)</option>
+            </optgroup>
+        </select>
+        <p class="help-text">Escolha a ação do sistema que deve disparar este e-mail.</p>
+      </div>
+      <div class="form-group">
+        <label for="subject">Assunto do E-mail</label>
+        <input type="text" id="subject" name="subject" placeholder="Ex: Seu trial SmartManiaa termina em 3 dias!" required>
+        <p class="help-text">Variáveis disponíveis: <code>{{product_family}}</code></p>
+      </div>
+      <div class="form-group">
+        <label for="body">Corpo do E-mail (HTML)</label>
+        <textarea id="body" name="body" required></textarea>
+        <p class="help-text">
+          <b>Variáveis Disponíveis:</b><br>
+          <code>{{license_key}}</code>, <code>{{trial_end_date}}</code>, <code>{{product_family}}</code> (Nome de Exibição)<br>
+          <code>{{family_homepage_url}}</code>, <code>{{family_support_email}}</code>, <code>{{family_logo_url}}</code><br>
+          <code>{{family_purchase_links}}</code> (Lista de links de compra)
+        </p>
+      </div>
+      <button type="submit">Criar Template</button>
+    </form>
+  </div>
+</body>
+</html>

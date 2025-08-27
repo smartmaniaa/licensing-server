@@ -1,277 +1,290 @@
+# ---- models/license.rb (VERSÃO FINAL DEFINITIVA E CORRIGIDA) ----
+
 require 'securerandom'
 require 'date'
+
 class License
-  # ------------------------- LISTAGEM E UTILIDADES -----------------------------
-  def self.filter(query: nil, origin: nil)
-    sql = "SELECT * FROM licenses"
-    params = []
-    where_clauses = []
-    if query && !query.empty?
-      params << "%#{query}%"
-      where_clauses << "(email ILIKE $#{params.length} OR license_key ILIKE $#{params.length} OR mac_address ILIKE $#{params.length})"
+
+  #-- Encontra ou cria o "container" da licença (tabela 'licenses').
+  def self.find_or_create_by_email_and_family(email, family)
+    conn = $db
+    result = conn.exec_params("SELECT * FROM licenses WHERE email = $1 AND family = $2 LIMIT 1", [email, family])
+    if result.num_tuples > 0
+      [result[0]['id'], result[0]['license_key'], false]
+    else
+      key = generate_key_for_family(family)
+      insert_result = conn.exec_params("INSERT INTO licenses (license_key, email, family) VALUES ($1, $2, $3) RETURNING id, license_key", [key, email, family])
+      [insert_result[0]['id'], insert_result[0]['license_key'], true]
     end
-    if origin && !origin.empty?
-      params << origin
-      where_clauses << "origin = $#{params.length}"
+  end
+
+  #-- Lógica de bloqueio de trial robusta.
+  def self.trial_exists?(email:, mac_address:, family:)
+    license_id_result = $db.exec_params("SELECT id FROM licenses WHERE (email = $1 OR mac_address = $2) AND family = $3 LIMIT 1", [email, mac_address, family])
+    return false if license_id_result.num_tuples.zero?
+    license_id = license_id_result[0]['id']
+    result = $db.exec_params("SELECT 1 FROM license_entitlements WHERE license_id = $1 AND (origin = 'trial' OR trial_expires_at IS NOT NULL) LIMIT 1", [license_id])
+    result.ntuples > 0
+  end
+
+  #-- Orquestrador principal: provisiona novos direitos de uso e dispara e-mails (VERSÃO FINAL)
+  def self.provision_license(email:, family:, product_skus:, origin:, grant_source:, trial_expires_at: nil, expires_at: nil, status: 'active', platform_subscription_id: nil, mac_address: nil, locale: nil, stripe_customer_id: nil)
+    conn = $db
+    license_id, key, was_new_license = find_or_create_by_email_and_family(email, family)
+
+    # NOVO BLOCO: Salva/atualiza o ID do cliente do Stripe na licença, se fornecido
+    if stripe_customer_id
+      conn.exec_params("UPDATE licenses SET stripe_customer_id = $1 WHERE id = $2", [stripe_customer_id, license_id])
     end
-    sql += " WHERE #{where_clauses.join(' AND ')}" unless where_clauses.empty?
-    sql += " ORDER BY created_at DESC"
-    $db.exec_params(sql, params)
+    
+    # --- CAMADA 1: E-MAIL OBRIGATÓRIO DE CRIAÇÃO DE CHAVE ---
+    if was_new_license
+      begin
+        puts "[EMAIL CAMADA 1] Chave nova criada. Enviando e-mail padrão com a chave."
+        Mailer.send_license_email(to_email: email, license_key: key, family: family)
+      rescue => e
+        puts "[ALERTA] Falha ao enviar o e-mail padrão da chave de licença: #{e.class} - #{e.message}"
+      end
+    end
+
+    # --- LÓGICA DE NEGÓCIO PRINCIPAL ---
+    if locale
+      conn.exec_params("UPDATE licenses SET locale = $1 WHERE id = $2 AND locale IS NULL", [locale, license_id])
+      puts "[LICENSE] Locale '#{locale}' salvo para a licença ID #{license_id}."
+    end
+    
+    if mac_address
+      conn.exec_params("UPDATE licenses SET mac_address = $1 WHERE id = $2 AND mac_address IS NULL", [mac_address, license_id])
+    end
+
+    if !was_new_license && origin == 'stripe'
+      puts "[LICENSE] Cliente existente comprando via Stripe. Desvinculando MAC Address para flexibilidade de ativação."
+      unlink_mac(license_id) 
+    end
+
+    full_product_skus = expand_suites(product_skus)
+
+    # LÓGICA CRÍTICA DE CRIAÇÃO DOS DIREITOS DE USO (ENTITLEMENTS)
+    full_product_skus.each do |sku|
+      if platform_subscription_id
+        existing = conn.exec_params(
+          "SELECT 1 FROM license_entitlements WHERE platform_subscription_id = $1 AND product_sku = $2 LIMIT 1",
+          [platform_subscription_id, sku]
+        )
+        if existing.num_tuples > 0
+          puts "[IDEMPOTENCY] Direito de uso para SKU '#{sku}' e Assinatura '#{platform_subscription_id}' já existe. Pulando."
+          next
+        end
+      end
+      entitlement_result = conn.exec_params(
+        "INSERT INTO license_entitlements (license_id, product_sku, status, origin, expires_at, trial_expires_at, platform_subscription_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+        [license_id, sku, status, origin, expires_at, trial_expires_at, platform_subscription_id]
+      )
+      entitlement_id = entitlement_result[0]['id']
+      conn.exec_params("INSERT INTO entitlement_grants (license_entitlement_id, grant_source) VALUES ($1, $2)", [entitlement_id, grant_source])
+    end
+
+    # --- CAMADA 2: E-MAILS OPCIONAIS BASEADOS EM GATILHOS ---
+    begin
+      trigger = nil
+      if status == 'trial'
+        trigger = 'trial_started'
+      elsif origin == 'stripe'
+        trigger = 'subscription_started'
+      elsif was_new_license && ['manual', 'beta', 'youtuber', 'suporte'].include?(origin)
+        trigger = 'admin_grant_created'
+      elsif !was_new_license && ['manual', 'beta', 'youtuber', 'suporte'].include?(origin)
+        trigger = 'admin_grant_added'
+      end
+
+      if trigger
+        puts "[EMAIL CAMADA 2] Gatilho '#{trigger}' detectado. Verificando regras de e-mail."
+        trigger_customer_email(
+          trigger_event: trigger,
+          family: family,
+          to_email: email,
+          license_key: key,
+          trial_end_date: trial_expires_at ? trial_expires_at.strftime('%d/%m/%Y') : '',
+          granted_skus: full_product_skus
+        )
+      end
+
+      # A notificação para o admin continua sendo enviada normalmente.
+      Mailer.send_admin_notification(
+        subject: "Nova Licença (#{origin}) para a família '#{family}'",
+        body: "Direito de uso criado para #{email} na família '#{family}'. SKUs: #{full_product_skus.join(', ')}",
+        family: family
+      )
+    rescue => e
+      puts "[ALERTA] Falha no bloco de envio de e-mails (regras): #{e.class} - #{e.message}"
+    end
+
+    [license_id, key, was_new_license]
   end
-  def self.find_duplicate_subscriptions
-    $db.exec(%Q{
-      SELECT
-        l.email,
-        p.family,
-        le.product_sku,
-        COUNT(eg.id) AS grants_count
-      FROM licenses l
-      JOIN license_entitlements le ON l.id = le.license_id
-      JOIN products p ON le.product_sku = p.sku
-      JOIN entitlement_grants eg ON le.id = eg.license_entitlement_id
-      WHERE l.status = 'active'
-      GROUP BY l.email, p.family, le.product_sku
-      HAVING COUNT(eg.id) > 1
-      ORDER BY grants_count DESC
-    })
+
+  #-- MÉTODOS DE ATUALIZAÇÃO VIA STRIPE
+  def self.update_entitlement_from_stripe(subscription_id:, new_expires_at:, new_status: 'active')
+    $db.exec_params("UPDATE license_entitlements SET expires_at = $1, status = $2 WHERE platform_subscription_id = $3", [new_expires_at, new_status, subscription_id])
   end
+
+  def self.update_entitlement_status_from_stripe(subscription_id:, status:)
+    $db.exec_params("UPDATE license_entitlements SET status = $1 WHERE platform_subscription_id = $2", [status, subscription_id])
+  end
+  
+  #-- MÉTODOS DE ADMIN
+  def self.unlink_mac(license_id)
+    $db.exec_params("UPDATE licenses SET mac_address = NULL WHERE id = $1", [license_id])
+  end
+
+  def self.delete(license_id)
+    $db.exec_params("DELETE FROM licenses WHERE id = $1", [license_id])
+  end
+
+  def self.revoke(license_id)
+    $db.exec_params("UPDATE license_entitlements SET status = 'revoked' WHERE license_id = $1 AND status = 'active'", [license_id])
+  end
+
+  def self.delete_entitlement(entitlement_id)
+    $db.exec_params("DELETE FROM license_entitlements WHERE id = $1", [entitlement_id])
+  end
+  
+  #-- MÉTODOS DE LOG DE TRIAL
   def self.all_trial_attempts
     $db.exec('SELECT * FROM trial_attempts ORDER BY attempted_at DESC')
   end
-  def self.find(id)
-    result = $db.exec_params('SELECT * FROM licenses WHERE id = $1', [id])
-    result.num_tuples > 0 ? result[0] : nil
-  end
-  def self.find_entitlements(license_id)
-    $db.exec_params(%Q{
-      SELECT p.name, eg.grant_source, eg.id as grant_id
-      FROM products p
-      JOIN license_entitlements le ON p.sku = le.product_sku
-      JOIN entitlement_grants eg ON le.id = eg.license_entitlement_id
-      WHERE le.license_id = $1 ORDER BY p.name
-    }, [license_id])
-  end
-  def self.revoke(id)
-    $db.exec_params("UPDATE licenses SET status = 'revoked' WHERE id = $1", [id])
-  end
-  def self.unlink_mac(id)
-    $db.exec_params("UPDATE licenses SET mac_address = NULL WHERE id = $1", [id])
-  end
-  def self.delete(id)
-    $db.exec_params("DELETE FROM licenses WHERE id = $1", [id])
-  end
-  def self.revoke_grant(grant_id)
-    $db.exec_params("DELETE FROM entitlement_grants WHERE id = $1", [grant_id])
-    $db.exec("DELETE FROM license_entitlements WHERE id NOT IN (SELECT DISTINCT license_entitlement_id FROM entitlement_grants)")
-  end
-  # -------- Checagem se já existe trial para email ou mac (qualquer status) na família --------
-  def self.trial_exists?(email:, mac_address:, family:)
-    result = $db.exec_params(
-      "SELECT 1 FROM licenses
-       WHERE family = $1
-       AND origin = 'trial'
-       AND (email = $2 OR mac_address = $3)
-       LIMIT 1",
-      [family, email, mac_address]
-    )
-    result.ntuples > 0
-  end
-  # --------------------------------- NOVO: Busca/Cria pelo par email+family --------------------------------
-  def self.find_or_create_by_email_and_family(email, family, origin: "unknown", status: "active", expires_at: nil, mac_address: nil, platform_subscription_id: nil)
-    license_result = $db.exec_params(
-      "SELECT * FROM licenses WHERE email = $1 AND family = $2 LIMIT 1", [email, family]
-    )
-    if license_result.num_tuples > 0
-      license = license_result[0]
-      license_id = license['id']
-      key = license['license_key']
-      # PROTEÇÃO: NUNCA sobrescrever uma licença existente com "trial"
-      if origin == 'trial'
-        puts "[INFO] Tentativa de recriar trial bloqueada: já existe licença (ID: #{license_id}, origin: #{license['origin']}, status: #{license['status']}, email: #{license['email']}, family: #{license['family']})"
-        return [license_id, key, false]
-      end
-      updates = []
-      update_params = []
-      # Atualização de origem/status só se vier de upgrade ou alteração real (Stripe, Pix, admin, etc)
-      if origin && license['origin'] != origin
-        updates << "origin = $#{update_params.size + 1}"
-        update_params << origin
-      end
-      if status && license['status'] != status
-        updates << "status = $#{update_params.size + 1}"
-        update_params << status
-      end
-      if expires_at
-        updates << "expires_at = $#{update_params.size + 1}"
-        update_params << expires_at
-      end
-      if platform_subscription_id && (license['platform_subscription_id'].nil? || license['platform_subscription_id'] != platform_subscription_id)
-        updates << "platform_subscription_id = $#{update_params.size + 1}"
-        update_params << platform_subscription_id
-      end
-      if mac_address && (license['mac_address'].nil? || license['mac_address'] == '')
-        updates << "mac_address = $#{update_params.size + 1}"
-        update_params << mac_address
-      end
-      if updates.any?
-        $db.exec_params(
-          "UPDATE licenses SET #{updates.join(', ')} WHERE id = $#{update_params.size + 1}",
-          update_params + [license_id]
-        )
-        puts "[INFO] Licença existente ID #{license_id} sobreposta: #{updates.join(', ')}"
-      end
-      [license_id, key, false]
-    else
-      key = generate_key_for_family(family)
-      fields = %w(license_key email family status origin)
-      values = [key, email, family, status, origin]
-      placeholders = (1..fields.length).map { |i| "$#{i}" }
-      if status == 'trial' && expires_at
-        fields << 'trial_expires_at'
-        values << expires_at
-        placeholders << "$#{values.length}"
-      elsif status == 'active' && expires_at
-        fields << 'expires_at'
-        values << expires_at
-        placeholders << "$#{values.length}"
-      end
-      if mac_address
-        fields << 'mac_address'
-        values << mac_address
-        placeholders << "$#{values.length}"
-      end
-      if platform_subscription_id
-        fields << 'platform_subscription_id'
-        values << platform_subscription_id
-        placeholders << "$#{values.length}"
-      end
-      sql = "INSERT INTO licenses (#{fields.join(', ')}) VALUES (#{placeholders.join(', ')}) RETURNING id"
-      result = $db.exec_params(sql, values)
-      license_id = result[0]['id']
-      [license_id, key, true]
-    end
-  end
-  # -------------------- PROVISIONAMENTO CENTRALIZADO -------------------
- def self.provision_license(email:, family:, product_skus:, origin:, status: 'active', expires_at: nil, mac_address: nil, platform_subscription_id: nil, grant_source: nil)
-  # BLOQUEIO trial antes de tudo
-  if origin == 'trial' && trial_exists?(email: email, mac_address: mac_address, family: family)
-    raise "Trial já utilizado para este email ou MAC nessa família"
-  end
-  conn = $db
-  # Busca/cria de licença garantida pelo escopo email+family
-  license_id, key, was_new = self.find_or_create_by_email_and_family(
-    email, family,
-    origin: origin,
-    status: status,
-    expires_at: expires_at,
-    mac_address: mac_address,
-    platform_subscription_id: platform_subscription_id
-  )
-  # Atualiza trial para ativo, se mudou no fluxo
-  license_row = conn.exec_params("SELECT * FROM licenses WHERE id = $1", [license_id])[0]
-  if license_row && license_row['status'] == 'trial' && status == 'active'
-    conn.exec_params("UPDATE licenses SET status = 'active', trial_expires_at = NULL WHERE id = $1", [license_id])
-  end
-  # Expande SKUs caso família seja suite
-  full_skus = expand_suites(product_skus, conn: conn)
-  add_entitlements(
-    license_id: license_id,
-    product_skus: full_skus,
-    grant_source: grant_source || "generic_#{origin}",
-    conn: conn
-  )
 
-  # ------ ENVIO DE E-MAILS AUTOMÁTICO (AJUSTADO) -------
-  if was_new || (status != 'trial')
-    begin
-      Mailer.send_license_email(
-        to_email: email,
-        license_key: key,
-        type: (status == 'trial' ? :trial : :purchase)
-      )
-      Mailer.send_admin_notification(
-        subject: "Licença #{was_new ? 'Criada' : 'Atualizada'} (#{origin})",
-        body: "Licença #{was_new ? 'criada' : 'atualizada'} para #{email} na família '#{family}' (status: #{status}).\nKey: #{key}.\nSKUs: #{full_skus.join(', ')}.\nFonte: #{grant_source || "generic_#{origin}"}."
-      )
-    rescue => e
-      puts "[ALERTA] Falha ao enviar e-mail automático: #{e.class} - #{e.message}"
-    end
+  def self.log_trial_denied(email:, mac_address:, product_sku:, reason:)
+    $db.exec_params("INSERT INTO trial_attempts (email, mac_address, product_sku, reason, attempted_at) VALUES ($1, $2, $3, $4, NOW())", [email, mac_address, product_sku, reason])
   end
 
-  [license_id, key, was_new]
-end
+  #-- MÉTODOS AUXILIARES
+  def self.generate_key_for_family(family_name)
+    prefix = family_name.upcase.gsub(/[^A-Z0-9]/, '')
+    random_part = Array.new(3) { SecureRandom.alphanumeric(4).upcase }.join('-')
+    "#{prefix}-#{random_part}"
+  end
 
-  # ---------------------- AUXILIARES / MÉTODOS DE SUPORTE -----------------------
-  def self.expand_suites(product_skus, conn: $db)
-    all_skus = product_skus.dup
-    product_skus.each do |sku|
-      components_result = conn.exec_params('SELECT component_product_id FROM suite_components WHERE suite_product_id = $1', [sku])
+  def self.find_family_by_sku(sku)
+    result = $db.exec_params('SELECT family FROM products WHERE sku = $1 LIMIT 1', [sku])
+    result.first && result.first['family']
+  end
+
+  def self.all_family_skus(family)
+    res = $db.exec_params("SELECT sku FROM products WHERE family = $1", [family])
+    res.map { |row| row['sku'] }
+  end
+
+  def self.expand_suites(product_skus)
+    all_skus = product_skus.uniq.dup
+    product_skus.uniq.each do |sku|
+      components_result = $db.exec_params('SELECT component_product_id FROM suite_components WHERE suite_product_id = $1', [sku])
       if components_result.num_tuples > 0
         all_skus.concat(components_result.map { |row| row['component_product_id'] })
       end
     end
     all_skus.uniq
   end
-  def self.generate_key_for_family(family_name)
-    prefix = family_name.upcase.gsub(/[^A-Z0-9]/, '')
-    random_part = Array.new(3) { SecureRandom.alphanumeric(4).upcase }.join('-')
-    "#{prefix}-#{random_part}"
+
+ #-- MÉTODO DE BUSCA PARA O PAINEL DE ADMIN (VERSÃO CORRIGIDA)
+  def self.all_with_summary
+    $db.exec(%q{
+      SELECT
+        licenses.*,
+        COALESCE(
+          -- Prioriza mostrar 'Trial' se houver um direito de uso de trial ativo.
+          (SELECT 'Trial' FROM license_entitlements le
+           WHERE le.license_id = licenses.id AND le.status = 'trial' 
+           AND (le.trial_expires_at > NOW() OR le.trial_expires_at IS NULL) LIMIT 1),
+           
+          -- Se não for trial, procura por um direito 'Ativo'.
+          (SELECT 'Ativo' FROM license_entitlements le
+           WHERE le.license_id = licenses.id AND le.status = 'active' LIMIT 1),
+           
+          -- Se não encontrar nenhum dos dois, a licença é 'Inativo'.
+          'Inativo'
+        ) AS summary_status,
+        
+        -- A lista de origens agora inclui 'trial' para licenças ativas ou em trial.
+        (SELECT string_agg(DISTINCT le.origin, ', ')
+         FROM license_entitlements le
+         WHERE le.license_id = licenses.id AND le.status IN ('active', 'trial')) AS summary_origins
+      FROM
+        licenses
+      ORDER BY
+        licenses.id DESC
+    })
   end
-  def self.add_entitlements(license_id:, product_skus:, grant_source:, conn: $db)
-    product_skus.each do |sku|
-      conn.exec_params(
-        'INSERT INTO license_entitlements (license_id, product_sku) VALUES ($1, $2) ON CONFLICT (license_id, product_sku) DO NOTHING',
-        [license_id, sku]
+  
+  #-- MÉTODO PRIVADO: Lógica para disparar e-mails para clientes com base nas regras (VERSÃO COMPLETA E CORRIGIDA)
+  private_class_method def self.trigger_customer_email(trigger_event:, family:, to_email:, license_key: nil, trial_end_date: '', granted_skus: [])
+    # A query SQL completa que busca o template e as informações da família.
+    rule_check = $db.exec_params(%q{
+      SELECT
+        t.subject, t.body,
+        f.display_name, f.homepage_url, f.support_email, f.logo_url, f.sender_name
+      FROM email_rules r
+      JOIN email_templates t ON r.email_template_id = t.id
+      JOIN product_family_info f ON r.family_name = f.family_name
+      WHERE r.family_name = $1 AND t.trigger_event = $2 AND r.is_active = true
+      LIMIT 1
+    }, [family, trigger_event])
+
+    return if rule_check.num_tuples.zero?
+
+    email_data = rule_check.first
+
+    subject = email_data['subject'].gsub('{{product_family}}', email_data['display_name'] || family.capitalize)
+    body = email_data['body']
+
+    body.gsub!('{{license_key}}', license_key.to_s)
+    body.gsub!('{{trial_end_date}}', trial_end_date.to_s)
+    body.gsub!('{{product_family}}', email_data['display_name'] || family.capitalize)
+    body.gsub!('{{family_homepage_url}}', email_data['homepage_url'] || '#')
+    body.gsub!('{{family_support_email}}', email_data['support_email'] || 'suporte@maniaa.com.br')
+    body.gsub!('{{family_logo_url}}', email_data['logo_url'] || '')
+
+    # Bloco para listar produtos recém-adicionados (gatilho 'admin_grant_added')
+    if body.include?('{{granted_products_list}}') && !granted_skus.empty?
+      product_names_result = $db.exec_params(
+        "SELECT name FROM products WHERE sku = ANY($1::varchar[]) ORDER BY name",
+        [granted_skus]
       )
-      entitlement_result = conn.exec_params('SELECT id FROM license_entitlements WHERE license_id = $1 AND product_sku = $2', [license_id, sku])
-      entitlement_id = entitlement_result[0]['id']
-      conn.exec_params(
-        'INSERT INTO entitlement_grants (license_entitlement_id, grant_source) VALUES ($1, $2)',
-        [entitlement_id, grant_source]
-      )
+      if product_names_result.num_tuples > 0
+        list_html = "<ul>"
+        product_names_result.each { |prod| list_html << "<li>#{prod['name']}</li>" }
+        list_html << "</ul>"
+        body.gsub!('{{granted_products_list}}', list_html)
+      end
     end
-  end
-  def self.all_family_skus(family)
-    res = $db.exec_params("SELECT sku FROM products WHERE family = $1", [family])
-    res.map { |row| row['sku'] }
-  end
-  def self.family_product_names(family)
-    res = $db.exec_params("SELECT name FROM products WHERE family = $1 ORDER BY name", [family])
-    res.map { |row| row['name'] }
-  end
-  def self.family_purchase_link(family)
-    res = $db.exec_params(%Q{
-      SELECT pp.purchase_link FROM platform_products pp
-      JOIN products p ON pp.product_sku = p.sku
-      WHERE p.family = $1 AND pp.purchase_link IS NOT NULL AND pp.purchase_link != '' LIMIT 1
-    }, [family])
-    res.num_tuples > 0 ? res[0]['purchase_link'] : nil
-  end
-  def self.activate_license(license_id:)
-    $db.exec_params("UPDATE licenses SET status = 'active', trial_expires_at = NULL WHERE id = $1", [license_id])
-  end
-  def self.find_family_by_sku(sku)
-    result = $db.exec_params('SELECT family FROM products WHERE sku = $1 LIMIT 1', [sku])
-    result.first && result.first['family']
-  end
-  def self.log_trial_denied(email:, mac_address:, product_sku:, reason:)
-    $db.exec_params(
-      "INSERT INTO trial_attempts (email, mac_address, product_sku, reason, attempted_at) VALUES ($1, $2, $3, $4, NOW())",
-      [email, mac_address, product_sku, reason]
-    )
-    $db.exec_params(
-      "INSERT INTO trial_email_counters (email, attempts, last_attempt_at)
-       VALUES ($1, 1, NOW())
-       ON CONFLICT (email)
-       DO UPDATE SET attempts = trial_email_counters.attempts + 1, last_attempt_at = NOW()",
-      [email]
-    )
-    $db.exec_params(
-      "INSERT INTO trial_mac_counters (mac_address, attempts, last_attempt_at)
-       VALUES ($1, 1, NOW())
-       ON CONFLICT (mac_address)
-       DO UPDATE SET attempts = trial_mac_counters.attempts + 1, last_attempt_at = NOW()",
-      [mac_address]
+
+    # Bloco para listar links de compra (para templates que ainda o usam)
+    if body.include? '{{family_purchase_links}}'
+      links_html = ""
+      products_in_family = $db.exec_params(
+        "SELECT p.name, pp.purchase_link FROM products p
+         JOIN platform_products pp ON p.sku = pp.product_sku
+         WHERE p.family = $1 AND pp.purchase_link IS NOT NULL AND pp.purchase_link != ''
+         ORDER BY p.name",
+        [family]
+      )
+
+      if products_in_family.num_tuples > 0
+        links_html << "<ul>"
+        products_in_family.each { |prod| links_html << "<li><a href='#{prod['purchase_link']}'>Purchase #{prod['name']}</a></li>" }
+        links_html << "</ul>"
+      end
+      body.gsub!('{{family_purchase_links}}', links_html)
+    end
+
+    puts "[EMAIL] Disparando e-mail de cliente para '#{to_email}' via gatilho '#{trigger_event}'"
+    Mailer.send_license_email(
+      to_email: to_email,
+      subject: subject,
+      body: body,
+      sender_name: email_data['sender_name']
     )
   end
-end
+
+  private_class_method :trigger_customer_email
+
+end # FIM DA CLASSE LICENSE

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Configurações: <%= @family_info['display_name'] %> - SmartManiaa</title>
+  <style>
+    /* ... (Estilos sem alteração) ... */
+    body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; margin:2em; background:#f4f6f8; color:#333;}
+    .container { max-width: 900px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
+    h1, h2 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+    h2 { font-size: 1.4em; margin-top: 2em; border-bottom-style: solid; border-bottom-width: 1px; }
+    .form-group { margin-bottom: 1.5em; }
+    label { display: block; margin-bottom: 0.5em; font-weight: bold; }
+    input[type="text"], input[type="email"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+    .help-text { font-size: 0.9em; color: #666; margin-top: 5px; }
+    .btn-save { background-color: #28a745; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; text-decoration: none; }
+    .btn-secondary { background-color: #3498db; }
+    .form-actions { display: flex; align-items: center; gap: 15px; margin-top: 2em; }
+    .rules-table { width: 100%; border-collapse: collapse; margin-top: 1em; }
+    .rules-table th, .rules-table td { padding: 12px; border: 1px solid #ddd; text-align: left; }
+    .notifier-list { list-style-type: none; padding: 0; }
+    .notifier-list li { display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #eee; }
+    .tabs { display: flex; border-bottom: 2px solid #3498db; margin-bottom: 2em; }
+    .tab-link { padding: 10px 20px; cursor: pointer; margin-bottom: -2px; border-radius: 5px 5px 0 0; border: none; transition: background-color 0.2s; background-color: #f0f0f0; color: #666; }
+    .tab-link.active { background-color: #3498db; color: white; font-weight: 500; }
+    .tab-link:not(.active):hover { background-color: #e9ecef; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="/admin/families" class="back-link">&larr; Voltar para a Lista de Famílias</a>
+    <h1>Configurações da Família: <%= @family_info['display_name'] %></h1>
+
+    <div class="tabs">
+      <div class="tab-link active" onclick="openTab(event, 'Settings')">Configurações Gerais</div>
+      <div class="tab-link" onclick="openTab(event, 'Reports')">Relatórios Financeiros</div>
+    </div>
+
+    <div id="Settings" class="tab-content active">
+      <form action="/admin/family/<%= @family_name %>" method="post">
+        <h2>Informações Gerais</h2>
+        <div class="form-group">
+          <label for="display_name">Nome de Exibição</label>
+          <input type="text" id="display_name" name="display_name" value="<%= @family_info['display_name'] %>">
+          <p class="help-text">Como a família aparecerá nos e-mails (Ex: SmartGrid Suite). Variável: {{product_family}}</p>
+        </div>
+        <div class="form-group">
+          <label for="homepage_url">URL da Página da Família</label>
+          <input type="text" id="homepage_url" name="homepage_url" value="<%= @family_info['homepage_url'] %>">
+          <p class="help-text">Link principal para esta família. Variável: {{family_homepage_url}}</p>
+        </div>
+        <div class="form-group">
+          <label for="support_email">E-mail de Suporte</label>
+          <input type="email" id="support_email" name="support_email" value="<%= @family_info['support_email'] %>">
+          <p class="help-text">E-mail de contato para esta família. Variável: {{family_support_email}}</p>
+        </div>
+        <div class="form-group">
+          <label for="logo_url">URL do Logo</label>
+          <input type="text" id="logo_url" name="logo_url" value="<%= @family_info['logo_url'] %>">
+          <p class="help-text">URL da imagem do logo para esta família. Variável: {{family_logo_url}}</p>
+        </div>
+        <div class="form-group">
+          <label for="sender_name">Nome do Remetente do E-mail</label>
+          <input type="text" id="sender_name" name="sender_name" value="<%= @family_info['sender_name'] %>">
+          <p class="help-text">O nome que aparecerá no campo "De:" do e-mail (Ex: Equipe SmartGrid). Não é uma variável de corpo.</p>
+        </div>
+
+        <h2>Notificações para Admins</h2>
+        <ul class="notifier-list">
+          <% @notifiers.each do |notifier| %>
+            <li>
+              <span><%= notifier['email'] %></span>
+              <label><input type="checkbox" name="remove_notifiers[]" value="<%= notifier['email'] %>"> Remover</label>
+            </li>
+          <% end %>
+        </ul>
+        <div class="form-group">
+          <label for="new_notifier_email">Adicionar Novo E-mail de Notificação</label>
+          <input type="email" id="new_notifier_email" name="new_notifier_email" placeholder="novo.admin@email.com">
+        </div>
+
+        <h2>E-mails Automáticos para Clientes</h2>
+        <table class="rules-table">
+          <tbody>
+            <% @templates.each do |template| %>
+              <tr>
+                <td>
+                  <strong><%= template['name'] %></strong>
+                  <small>(Gatilho: <%= template['trigger_event'] %>)</small>
+                  <a href="/admin/email_templates/<%= template['id'] %>/edit">[Editar Conteúdo]</a>
+                </td>
+                <td style="width: 120px; text-align: center;">
+                  <input type="checkbox" name="rules[<%= template['id'] %>]" <%= 'checked' if @rules[template['id']] %>>
+                  <label>Ativo</label>
+                </td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+        
+        <div class="form-actions">
+          <button type="submit" class="btn-save">Salvar Todas as Configurações</button>
+          <a href="/admin/email_templates/new" class="btn-save btn-secondary">Criar Novo Template de E-mail</a>
+        </div>
+      </form>
+    </div>
+
+    <div id="Reports" class="tab-content">
+      <h2>Relatórios Financeiros para <%= @family_info['display_name'] %></h2>
+      <p><em>(Em desenvolvimento)</em></p>
+      <p>Esta área exibirá os relatórios de vendas e repasses (payouts) filtrados especificamente para esta família de produtos.</p>
+    </div>
+  </div>
+
+  <script>
+    function openTab(evt, tabName) {
+      var i, tabcontent, tablinks;
+      tabcontent = document.getElementsByClassName("tab-content");
+      for (i = 0; i < tabcontent.length; i++) {
+        tabcontent[i].style.display = "none";
+        tabcontent[i].className = tabcontent[i].className.replace(" active", "");
+      }
+      tablinks = document.getElementsByClassName("tab-link");
+      for (i = 0; i < tablinks.length; i++) {
+        tablinks[i].className = tablinks[i].className.replace(" active", "");
+      }
+      document.getElementById(tabName).style.display = "block";
+      document.getElementById(tabName).className += " active";
+      evt.currentTarget.className += " active";
+    }
+
+    // Garante que a primeira aba esteja visível e ativa ao carregar a página
+    document.addEventListener("DOMContentLoaded", function() {
+        // Corrige um bug visual para garantir que a aba certa esteja visível
+        document.querySelector('.tab-link.active').click();
+    });
+  </script>
+</body>
+</html>

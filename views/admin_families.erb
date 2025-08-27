@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Centro de Controle - SmartManiaa</title>
+  <style>
+    body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; margin:2em; background:#f4f6f8; color:#333;}
+    .container { max-width: 900px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
+    h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+    .back-link { display: inline-block; margin-bottom: 2em; color: #3498db; text-decoration: none; }
+    .family-list a { display: block; background-color: #f9f9f9; padding: 15px; margin-bottom: 10px; border-radius: 5px; text-decoration: none; color: #2c3e50; font-weight: 500; font-size: 1.1em; transition: background-color 0.2s; }
+    .family-list a:hover { background-color: #e8f4fd; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="/admin" class="back-link">&larr; Voltar ao Painel Principal</a>
+    <h1>Centro de Controle da Família</h1>
+    <p>Selecione uma família de produtos abaixo para gerenciar suas configurações de e-mail, URLs e outras variáveis personalizadas.</p>
+
+    <div class="family-list">
+      <% @families.each do |family| %>
+        <a href="/admin/family/<%= family['family_name'] %>">
+          <%= family['display_name'] || family['family_name'].capitalize %>
+        </a>
+      <% end %>
+    </div>
+  </div>
+</body>
+</html>

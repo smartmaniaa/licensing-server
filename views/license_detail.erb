@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <title>Detalhes da Licença - SmartManiaa</title>
   <style>
+    /* Estilos completos para a página */
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 2em; background-color: #f4f6f8; color: #333; }
-    .container { max-width: 800px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
+    .container { max-width: 900px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
     h1, h2 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
     ul { list-style-type: none; padding: 0; }
     li { background-color: #f9f9f9; padding: 10px; border: 1px solid #ddd; margin-bottom: 10px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
-    li strong { color: #555; }
     table { width: 100%; border-collapse: collapse; margin-top: 1em; }
-    th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #ddd; }
     th { background-color: #ecf0f1; color: #34495e; }
     .back-link { display: inline-block; margin-bottom: 2em; color: #3498db; text-decoration: none; }
     .back-link:hover { text-decoration: underline; }
@@ -19,8 +19,11 @@
     .actions-box form { display: inline-block; margin-right: 1em; }
     .actions-box button { background-color: #c0392b; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; font-size: 14px; }
     .actions-box button.unlink { background-color: #f39c12; }
-    .actions-box button:hover { opacity: 0.8; }
-    .btn-revoke-grant { background-color: #e74c3c; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; }
+    .status-active { color: #27ae60; font-weight: bold; }
+    .status-trial { color: #2980b9; font-weight: bold; }
+    .status-revoked { color: #c0392b; font-weight: bold; }
+    .status-suspended { color: #e67e22; font-weight: bold; }
+    .btn-delete { background-color: #e74c3c; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -28,64 +31,52 @@
     <a href="/admin" class="back-link">&larr; Voltar para a lista</a>
     <h1>Detalhes da Licença</h1>
     <% if @license %>
-      <h2>Informações Principais</h2>
+      <h2>Informações Principais (Chaveiro)</h2>
       <ul>
-        <li><strong>ID:</strong> <span><%= @license['id'] %></span></li>
+        <li><strong>ID da Licença:</strong> <span><%= @license['id'] %></span></li>
         <li><strong>Email:</strong> <span><%= @license['email'] %></span></li>
         <li><strong>Chave:</strong> <code><%= @license['license_key'] %></code></li>
-        <li>
-          <strong>Status:</strong>
-          <span>
-            <% if @license['status'] == 'trial' %>
-              <span style="color: #2980b9; font-weight: bold;">Trial ativo</span>
-            <% elsif @license['status'] == 'active' %>
-              <span style="color: #27ae60; font-weight: bold;">Assinatura ativa</span>
-            <% elsif @license['status'] == 'suspended' %>
-              <span style="color: #e67e22; font-weight: bold;">Suspensa</span>
-            <% elsif @license['status'] == 'scheduled_for_cancel' %>
-              <span style="color: #f39c12; font-weight: bold;">Cancel. agendado</span>
-            <% elsif @license['status'] == 'revoked' %>
-              <span style="color: #c0392b; font-weight: bold;">Revogada</span>
-            <% else %>
-              <span><%= @license['status'] %></span>
-            <% end %>
-          </span>
-        </li>
+        <li><strong>Família:</strong> <span><%= @license['family'] %></span></li>
         <li><strong>MAC Address Vinculado:</strong> <span><%= @license['mac_address'] || 'Nenhum' %></span></li>
-        <li><strong>Origem:</strong> <span><%= @license['origin'] %></span></li>
-        <li><strong>Data de Criação:</strong> <span><%= Time.parse(@license['created_at']).strftime('%d/%m/%Y às %H:%M:%S') %></span></li>
-        <% if @license['trial_expires_at'] && !@license['trial_expires_at'].empty? %>
-          <li><strong>Expiração do Trial:</strong> <span><%= Time.parse(@license['trial_expires_at']).strftime('%d/%m/%Y às %H:%M:%S') %></span></li>
-        <% elsif @license['expires_at'] && !@license['expires_at'].empty? %>
-          <li><strong>Expiração da Assinatura:</strong> <span><%= Time.parse(@license['expires_at']).strftime('%d/%m/%Y às %H:%M:%S') %></span></li>
-        <% end %>
-        <% if @license['platform_subscription_id'] && !@license['platform_subscription_id'].empty? %>
-          <li><strong>Assinatura Stripe ID:</strong> <span><%= @license['platform_subscription_id'] %></span></li>
-        <% end %>
       </ul>
-      <h2>Direitos de Uso (Livro-Razão de Concessões)</h2>
+
+      <h2>Direitos de Uso (Entitlements)</h2>
       <table>
         <thead>
           <tr>
             <th>Produto</th>
-            <th>Origem da Concessão</th>
-            <th style="width: 120px;">Ações</th>
+            <th>Status</th>
+            <th>Origem</th>
+            <th>Validade</th>
+            <th>ID Assinatura Stripe</th>
+            <th style="width: 80px;">Ações</th>
           </tr>
         </thead>
         <tbody>
           <% if @entitlements.num_tuples.zero? %>
             <tr>
-              <td colspan="3" style="text-align: center;">Nenhum direito de uso encontrado para esta licença.</td>
+              <td colspan="6" style="text-align: center;">Nenhum direito de uso encontrado para esta licença.</td>
             </tr>
           <% else %>
             <% @entitlements.each do |entitlement| %>
               <tr>
-                <td><%= entitlement['name'] %></td>
-                <td><code><%= entitlement['grant_source'] %></code></td>
+                <td><%= entitlement['product_name'] %></td>
+                <td><span class="status-<%= entitlement['status'] %>"><%= entitlement['status'].capitalize %></span></td>
+                <td><%= entitlement['origin'] %></td>
                 <td>
-                  <form action="/admin/grant/<%= entitlement['grant_id'] %>/revoke" method="post" onsubmit="return confirm('Tem certeza que deseja revogar APENAS esta concessão de direito?');">
+                  <% if entitlement['trial_expires_at'] %>
+                    Trial até <%= Time.parse(entitlement['trial_expires_at']).strftime('%d/%m/%Y %H:%M') %>
+                  <% elsif entitlement['expires_at'] %>
+                    Expira em <%= Time.parse(entitlement['expires_at']).strftime('%d/%m/%Y %H:%M') %>
+                  <% else %>
+                    Vitalícia
+                  <% end %>
+                </td>
+                <td><code><%= entitlement['platform_subscription_id'] || 'N/A' %></code></td>
+                <td>
+                  <form action="/admin/entitlement/<%= entitlement['id'] %>/delete" method="post" onsubmit="return confirm('Tem certeza que deseja DELETAR este direito de uso permanentemente?');">
                     <input type="hidden" name="license_id" value="<%= @license['id'] %>">
-                    <button type="submit" class="btn-revoke-grant">Revogar Concessão</button>
+                    <button type="submit" class="btn-delete">Deletar</button>
                   </form>
                 </td>
               </tr>
@@ -93,16 +84,20 @@
           <% end %>
         </tbody>
       </table>
+      
       <div class="actions-box">
         <h2>Ações da Licença Inteira</h2>
         <form action="/admin/license/<%= @license['id'] %>/unlink_mac" method="post" onsubmit="return confirm('Tem certeza que deseja desvincular esta licença da máquina atual?');">
           <button type="submit" class="unlink">Desvincular Máquina</button>
         </form>
-        <form action="/admin/license/<%= @license['id'] %>/revoke" method="post" onsubmit="return confirm('ATENÇÃO: Tem certeza que deseja REVOGAR A LICENÇA INTEIRA?');">
-          <button type="submit">Revogar Licença Inteira</button>
+        <form action="/admin/license/<%= @license['id'] %>/revoke" method="post" onsubmit="return confirm('ATENÇÃO: Isso irá REVOGAR TODOS os direitos de uso ATIVOS desta licença. Confirma?');">
+          <button type="submit">Revogar Todos Direitos</button>
+        </form>
+         <form action="/admin/license/<%= @license['id'] %>/delete" method="post" onsubmit="return confirm('CUIDADO: Isso irá APAGAR PERMANENTEMENTE a licença e todos os seus direitos de uso. Deseja continuar?');">
+          <button type="submit" style="background-color: #e74c3c;">Deletar Licença</button>
         </form>
       </div>
-    <% else %>
+      <% else %>
       <p>Licença não encontrada.</p>
     <% end %>
   </div>

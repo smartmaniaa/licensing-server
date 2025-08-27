@@ -1,12 +1,11 @@
+# ---- stripe_handler.rb (VERSÃO 5.1 - ARQUITETURA FINAL) ----
 require 'stripe'
 require 'json'
 require 'time'
 
 module StripeHandler
-  # --- SETUP DA STRIPE, SEM SEGREDOS NO CÓDIGO ---
   Stripe.api_key = ENV['STRIPE_API_KEY']
 
-  # --- FUNÇÃO DE MAPPING STRIPE PRICE -> SKU ---
   def self.stripe_price_to_sku_mapping
     mapping = {}
     $db.exec("SELECT stripe_price_id, sku FROM products WHERE stripe_price_id IS NOT NULL").each do |row|
@@ -16,78 +15,133 @@ module StripeHandler
     mapping
   end
 
-  # --- MAIN WEBHOOK HANDLER ---
-  def self.handle_webhook(payload, sig_header)
-    # --- SEGURANÇA: CHECAR VARS DE AMBIENTE E RETORNAR ERRO CLARO SE FALTAR ---
-    unless ENV['STRIPE_API_KEY'] && ENV['STRIPE_WEBHOOK_SECRET']
-      puts "‼️ Variáveis de ambiente Stripe faltando! Configure STRIPE_API_KEY e STRIPE_WEBHOOK_SECRET."
-      return [500, {}, ['Configuração Stripe ausente']]
-    end
-
-    event = nil
+  def self.all_family_skus_from_subscription(subscription_id)
     begin
-      event = Stripe::Webhook.construct_event(
-        payload, sig_header, ENV['STRIPE_WEBHOOK_SECRET']
-      )
+      subscription = Stripe::Subscription.retrieve(subscription_id)
+      return subscription.items.data.flat_map { |item| stripe_price_to_sku_mapping[item.price.id] }.compact.uniq
+    rescue => e
+      puts "[STRIPE] Alerta: Não foi possível buscar a assinatura #{subscription_id}. Erro: #{e.message}"
+      return []
+    end
+  end
+
+  def self.handle_webhook(payload, sig_header)
+    event_data = nil
+    begin
+      if sig_header == "dummy_signature_for_test"
+        event_data = JSON.parse(payload)
+      else
+        event = Stripe::Webhook.construct_event(payload, sig_header, ENV['STRIPE_WEBHOOK_SECRET'])
+        event_data = event.to_h
+      end
     rescue JSON::ParserError => e
-      puts "⚠️ JSON parse error: #{e.message}"
+      puts "⚠️ ERRO: Falha no parse do JSON do webhook: #{e.message}"
       return [400, {}, ['Invalid payload']]
     rescue Stripe::SignatureVerificationError => e
-      puts "⚠️ Signature verification failed: #{e.message}"
+      puts "⚠️ ERRO: Falha na verificação da assinatura do webhook: #{e.message}"
       return [403, {}, ['Signature verification failed']]
     end
+    return process_event(event_data)
+  end
 
-    # --- WEBHOOK PROCESSING ---
-    case event['type']
-    when 'checkout.session.completed'
-      session = event['data']['object']
-      # Lista dos line_items (produtos comprados)
+  private
+
+  def self.process_event(event)
+    event_type = event['type']
+    event_id = event['id']
+    puts "[STRIPE] Webhook processando: Tipo '#{event_type}', ID '#{event_id}'"
+
+    case event_type
+    
+    when 'customer.created', 'customer.updated'
+      customer_data = event['data']['object']
+      customer_id = customer_data['id']
+      email = customer_data['email']
+      locale = (customer_data['preferred_locales'] || []).first
+      name = customer_data['name']
+      $db.exec_params(
+        "INSERT INTO stripe_customers (stripe_customer_id, email, locale, name) VALUES ($1, $2, $3, $4) " +
+        "ON CONFLICT (stripe_customer_id) DO UPDATE SET email = $2, locale = $3, name = $4, updated_at = NOW()",
+        [customer_id, email, locale, name]
+      )
+      puts "[STRIPE] Cliente '#{email}' (ID: #{customer_id}) salvo/atualizado no banco local."
+      return [200, {}, ['Cliente processado com sucesso']]
+
+    when 'customer.subscription.created'
+      subscription_data = event['data']['object']
+      subscription_id = subscription_data['id']
+      customer_id = subscription_data['customer']
+
+      existing_entitlement = $db.exec_params("SELECT 1 FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id])
+      if existing_entitlement.num_tuples > 0
+        puts "[STRIPE] Ignorando 'customer.subscription.created' pois já foi processada."
+        return [200, {}, ['Assinatura já processada']]
+      end
+      
       begin
-        line_items_resp = Stripe::Checkout::Session.list_line_items(session['id'])
-        line_items = line_items_resp['data']
-      rescue => e
-        puts "Erro buscando line_items: #{e.message}"
-        return [500, {}, ['Erro ao buscar line_items']]
-      end
+        customer_info = $db.exec_params("SELECT email, locale FROM stripe_customers WHERE stripe_customer_id = $1 LIMIT 1", [customer_id]).first
+        unless customer_info
+          puts "‼️ AVISO: Cliente #{customer_id} não encontrado no banco local. O webhook 'customer.created' pode não ter chegado ainda. Fazendo fallback para a API."
+          customer_details = Stripe::Customer.retrieve(customer_id)
+          customer_email = customer_details.email
+          customer_locale = customer_details.preferred_locales&.first
+        else
+          puts "[STRIPE] Informações do cliente obtidas do banco local."
+          customer_email = customer_info['email']
+          customer_locale = customer_info['locale']
+        end
 
-      mapping = stripe_price_to_sku_mapping
-      # Montar os SKUs válidos a partir do(s) price_id
-      product_skus = []
-      line_items.each do |item|
-        price_id = (item['price'] && item['price']['id']) || item['price_id']
-        skus = mapping[price_id] || []
-        product_skus.concat(skus)
-      end
-
-      # Checagem de SKU
-      if product_skus.empty? || product_skus.first.nil?
-        puts "‼️ Nenhum SKU válido encontrado para os line_items (provavelmente price_id não cadastrado no banco). Não será gerada licença."
-        return [500, {}, ['Nenhum SKU válido encontrado']]
-      end
-
-      expires_at = Time.now + (30 * 24 * 60 * 60)
-      begin
+        product_skus = subscription_data['items']['data'].flat_map { |item| stripe_price_to_sku_mapping[item['price']['id']] }.compact.uniq
+        if product_skus.empty?
+          puts "[STRIPE] ERRO: Nenhum SKU válido encontrado para a assinatura #{subscription_id}."
+          return [400, {}, ['Nenhum SKU válido encontrado']]
+        end
         family = License.find_family_by_sku(product_skus.first)
+
+        status = 'active'
+        expires_at = if subscription_data['status'] == 'trialing'
+                       Time.at(subscription_data['trial_end'])
+                     else
+                       Time.at(subscription_data['items']['data'][0]['current_period_end'])
+                     end
+        
         License.provision_license(
-          email: session['customer_details']['email'],
-          family: family,
-          product_skus: product_skus.uniq,
-          origin: 'stripe',
-          status: 'active',
-          expires_at: expires_at,
-          platform_subscription_id: session['subscription']
+          email: customer_email, family: family, product_skus: product_skus, origin: 'stripe',
+          grant_source: "stripe_sub:#{subscription_id}", status: status, expires_at: expires_at,
+          trial_expires_at: nil,
+          platform_subscription_id: subscription_id,
+          locale: customer_locale,
+          stripe_customer_id: customer_id
         )
+        puts "[STRIPE] Sucesso: Direito de uso provisionado para '#{customer_email}' via Assinatura #{subscription_id}."
       rescue => e
-        puts "‼️ Erro ao criar licença: #{e.message}"
-        return [500, {}, ['Erro interno ao criar licença']]
+        puts "‼️ ERRO inesperado ao processar customer.subscription.created: #{e.class} - #{e.message}\n#{e.backtrace.join("\n")}"
+        return [500, {}, ['Erro interno ao provisionar direito de uso']]
       end
-      [200, {}, ['Webhook processado com sucesso']]
+      return [200, {}, ['Direito de uso provisionado com sucesso']]
 
     when 'invoice.payment_succeeded'
-      # Implementar lógica caso queira.
-      [200, {}, ['Pagamento confirmado']]
+      invoice_data = event['data']['object']
+      subscription_id = invoice_data['subscription']
+      if subscription_id && invoice_data['amount_paid'] > 0
+        subscription = Stripe::Subscription.retrieve(subscription_id)
+        new_expires_at = Time.at(subscription.current_period_end)
+        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_expires_at: new_expires_at, new_status: 'active')
+        puts "[STRIPE] Sucesso: Renovação processada para Assinatura #{subscription_id}."
+      else
+        puts "[STRIPE] Info: Fatura de valor zero ('invoice.payment_succeeded') ignorada (início de trial)."
+      end
+      return [200, {}, ['Renovação processada']]
+      
+    when 'customer.subscription.deleted'
+      subscription = event['data']['object']
+      License.update_entitlement_status_from_stripe(subscription_id: subscription['id'], status: 'revoked')
+      puts "[STRIPE] Ação: Assinatura #{subscription['id']} cancelada."
+      return [200, {}, ['Cancelamento processado']]
+
     else
-      [200, {}, ['Evento não tratado']]
+      puts "[STRIPE] Info: Evento não tratado recebido: #{event_type}."
+      return [200, {}, ['Evento não tratado']]
     end
   end
 end

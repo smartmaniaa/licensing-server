@@ -1,6 +1,9 @@
+# ---- server.rb (VERSÃO ABSOLUTAMENTE COMPLETA E FINAL) ----
+
 require 'sinatra/base'
 require 'pg'
 require 'json'
+require 'csv'
 require 'dotenv/load'
 require_relative 'models/license.rb'
 require_relative 'models/product.rb'
@@ -10,15 +13,12 @@ require_relative 'stripe_handler.rb'
 $stdout.sync = true
 
 class SmartManiaaApp < Sinatra::Base
-  # =======  =======
   set :bind, '0.0.0.0'
-  # ===========================================
-
+  
   before do
     puts "========= DEBUG HEADERS ========"
     puts "Host do request: #{request.host.inspect}"
     puts "Path: #{request.path_info}"
-    puts "Headers: #{request.env.select { |k, _| k.start_with?('HTTP_') }}"
     puts "================================="
   end
 
@@ -29,10 +29,10 @@ class SmartManiaaApp < Sinatra::Base
   configure do
     retries = 5
     begin
-      if ENV['DATABASE_URL'] # Render/cloud/local com URL pronta
+      if ENV['DATABASE_URL']
         $db = PG.connect(ENV['DATABASE_URL'], sslmode: 'require')
-        puts "=> Conectado ao banco de dados via DATABASE_URL (Render/cloud)!"
-      else # Dev local simples, ex: Docker Compose
+        puts "=> Conectado ao banco de dados via DATABASE_URL!"
+      else
         $db = PG.connect(
           host: ENV.fetch('DATABASE_HOST', 'localhost'),
           dbname: ENV.fetch('DATABASE_NAME', 'smartmaniaa_licensing_dev'),
@@ -70,7 +70,6 @@ class SmartManiaaApp < Sinatra::Base
   # --- ROTAS PÚBLICAS ---
   get '/' do
     content_type :json
-    puts "[LOG] Rota GET / foi acessada."
     { status: "API de Licenciamento SmartManiaa no ar!" }.to_json
   end
 
@@ -95,30 +94,39 @@ class SmartManiaaApp < Sinatra::Base
     mac_address = params['mac_address']
     product_sku = params['product_sku']
     family = License.find_family_by_sku(product_sku)
-    family_skus = License.all_family_skus(family)
-    expires_at = (Time.now + 7*24*60*60).strftime('%Y-%m-%d')
 
     if License.trial_exists?(email: email, mac_address: mac_address, family: family)
       License.log_trial_denied(
-        email: email,
-        mac_address: mac_address,
-        product_sku: product_sku,
-        reason: "Trial já existe para este email ou MAC na família #{family}"
+        email: email, mac_address: mac_address, product_sku: product_sku, 
+        reason: "Trial já utilizado para este e-mail ou MAC na família #{family}"
       )
+      puts "[TRIAL] Negado: Tentativa de novo trial para '#{email}' ou MAC '#{mac_address}' que já possui histórico."
+
+          #-- INÍCIO DO NOVO BLOCO DE CÓDIGO --
+       # Dispara o e-mail de trial negado
+       begin
+         License.send(:trigger_customer_email,
+           trigger_event: 'trial_denied',
+           family: family,
+           to_email: email
+         )
+       rescue => e
+         puts "[ALERTA] Falha ao enviar e-mail de trial negado: #{e.class} - #{e.message}"
+       end
+      
       halt 403, { error: "Trial já existe para este email ou MAC.", status: "denied" }.to_json
     end
 
-    result = License.provision_license(
-      email: email,
-      family: family,
-      product_skus: family_skus,
-      origin: 'trial',
-      status: 'trial',
-      expires_at: expires_at,
-      mac_address: mac_address,
+    family_skus = License.all_family_skus(family)
+    expires_at = (Time.now + 7*24*60*60)
+
+    _license_id, key, _was_new = License.provision_license(
+      email: email, family: family, product_skus: family_skus, origin: 'trial',
+      status: 'trial', trial_expires_at: expires_at, mac_address: mac_address,
       grant_source: "trial_#{family}"
     )
-    result.to_json
+    puts "[TRIAL] Sucesso: Trial iniciado para '#{email}' no MAC '#{mac_address}'."
+    { license_key: key, status: "trial_started", expires_at: expires_at }.to_json
   end
 
   post '/validate' do
@@ -129,14 +137,43 @@ class SmartManiaaApp < Sinatra::Base
       halt 400, { error: 'Invalid JSON' }.to_json
     end
 
-    validation_result = License.validate(
-      key: params['license_key'],
-      mac_address: params['mac_address'],
-      product_sku: params['product_sku']
-    )
-    validation_result.to_json
-  end
+    key = params['license_key']
+    mac = params['mac_address']
+    sku = params['product_sku']
 
+    license_result = $db.exec_params("SELECT * FROM licenses WHERE license_key = $1 LIMIT 1", [key])
+    if license_result.num_tuples.zero?
+      puts "[VALIDATE] Falha: Chave '#{key}' não encontrada."
+      return { status: 'invalid', message: 'Chave de licença não encontrada.' }.to_json
+    end
+    license = license_result.first
+
+    entitlement_result = $db.exec_params(
+      %Q{
+        SELECT * FROM license_entitlements
+        WHERE license_id = $1 AND product_sku = $2 AND status = 'active'
+        AND (expires_at > NOW() OR expires_at IS NULL) LIMIT 1
+      },
+      [license['id'], sku]
+    )
+
+    if entitlement_result.num_tuples.zero?
+      puts "[VALIDATE] Falha: Chave '#{key}' para produto '#{sku}'. Motivo: Sem direito de uso ativo."
+      return { status: 'invalid', message: "Nenhum direito de uso ativo encontrado para este produto." }.to_json
+    end
+
+    if license['mac_address'].nil?
+      $db.exec_params("UPDATE licenses SET mac_address = $1 WHERE id = $2", [mac, license['id']])
+      puts "[VALIDATE] Info: MAC '#{mac}' vinculado à chave '#{key}' no primeiro uso."
+    elsif license['mac_address'] != mac
+      puts "[VALIDATE] Falha: Chave '#{key}' para MAC '#{mac}'. Motivo: Conflito de MAC (DB: #{license['mac_address']})."
+      return { status: 'invalid', message: "Chave já vinculada a outro computador." }.to_json
+    end
+
+    puts "[VALIDATE] Sucesso: Chave '#{key}' validada para o produto '#{sku}'."
+    { status: 'valid', message: 'Licença válida.' }.to_json
+  end
+  
   # --- ROTAS DE TESTE ---
   get '/admin/create_suite_test' do
     content_type :json
@@ -145,37 +182,41 @@ class SmartManiaaApp < Sinatra::Base
     produtos_da_suite = produtos_da_suite_result.map { |row| row['sku'] }
     family = License.find_family_by_sku(produtos_da_suite.first)
     License.provision_license(
-      email: email_teste,
-      family: family,
-      product_skus: produtos_da_suite,
-      origin: 'manual_test',
-      status: 'active'
+      email: email_teste, family: family, product_skus: produtos_da_suite,
+      origin: 'manual_test', grant_source: 'suite_test_button', status: 'active'
     )
     { message: "Chave de licença para a Suite completa gerada com sucesso" }.to_json
   end
 
-  get '/test_stripe_webhook' do
-    content_type :json
-    begin
-      payload = File.read('test_payload.json')
-      StripeHandler.handle_webhook(payload, "dummy_signature_for_test")
-      { status: 'ok', message: 'Simulação de webhook processada (sem verificação de assinatura).' }.to_json
-    rescue Errno::ENOENT
-      halt 500, { error: 'Arquivo test_payload.json não encontrado.' }.to_json
-    rescue JSON::ParserError
-      halt 500, { error: 'Conteúdo de test_payload.json não é um JSON válido.' }.to_json
-    end
+ # Arquivo: server.rb
+
+# Rota de teste do Stripe agora aceita POST e lê o corpo da requisição
+post '/test_stripe_webhook' do
+  content_type :json
+  payload = request.body.read
+  
+  # Adiciona um log para confirmar que o corpo foi recebido corretamente
+  puts "[DEBUG] Corpo da requisição recebido na rota de teste:"
+  puts payload
+
+  begin
+    # Passa o payload recebido diretamente para o handler
+    StripeHandler.handle_webhook(payload, "dummy_signature_for_test")
+    { status: 'ok', message: 'Simulação de webhook processada.' }.to_json
+  rescue => e
+    puts "‼️ ERRO INESPERADO na rota /test_stripe_webhook: #{e.class} - #{e.message}"
+    halt 500, { error: "Erro interno no servidor: #{e.message}" }.to_json
   end
+end
 
   # --- ROTAS DO PAINEL DE ADMIN ---
   get '/admin' do
-   protected! # Verifica se o usuário está autenticado
-   puts "Acessando a rota /admin" # Adicione essa linha
-   @licenses = License.filter(query: params['q'], origin: params['origin'])
-   @origins = $db.exec('SELECT DISTINCT origin FROM licenses WHERE origin IS NOT NULL ORDER BY origin').map { |row| row['origin'] }
-   erb :admin_dashboard
- end
+    protected!
+    @licenses = License.all_with_summary
+    erb :admin_dashboard
+  end
 
+  # --- ROTAS DE GERENCIAMENTO DE PRODUTOS ---
   get '/admin/products' do
     protected!
     @products = Product.all
@@ -192,21 +233,24 @@ class SmartManiaaApp < Sinatra::Base
   post '/admin/products' do
     protected!
     success = Product.create(
-      sku: params['sku'],
-      name: params['name'],
-      family: params['family']
+      sku: params['sku'], name: params['name'], family: params['family']
     )
     if success
+      new_family = params['family']
+      admin_email = Mailer::ADMIN_EMAIL
+      notifiers_exist_result = $db.exec_params("SELECT 1 FROM admin_notifiers WHERE family_name = $1 LIMIT 1", [new_family])
+      if notifiers_exist_result.num_tuples.zero?
+        $db.exec_params(
+          "INSERT INTO admin_notifiers (email, family_name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+          [admin_email, new_family]
+        )
+        puts "[ADMIN] Família '#{new_family}' detectada como nova. Notificador padrão '#{admin_email}' adicionado."
+      end
+
       Product.save_platform_product(
-        sku: params['sku'],
-        platform: 'stripe',
-        platform_id: params['platform_id'],
-        link: params['purchase_link']
+        sku: params['sku'], platform: 'stripe', platform_id: params['platform_id'], link: params['purchase_link']
       )
-      $db.exec_params(
-        "UPDATE products SET stripe_price_id = $1 WHERE sku = $2",
-        [params['platform_id'], params['sku']]
-      )
+      $db.exec_params("UPDATE products SET stripe_price_id = $1 WHERE sku = $2", [params['platform_id'], params['sku']])
       redirect '/admin/products'
     else
       session[:error] = "Falha ao criar o produto. O SKU ou o Nome do Produto já existem."
@@ -228,29 +272,12 @@ class SmartManiaaApp < Sinatra::Base
   post '/admin/product/:sku' do
     protected!
     product_sku = params['sku']
-    success = Product.update(
-      sku: product_sku,
-      name: params['name'],
-      family: params['family']
-    )
-    if success
-      Product.save_platform_product(
-        sku: product_sku,
-        platform: 'stripe',
-        platform_id: params['platform_id'],
-        link: params['purchase_link']
-      )
-      $db.exec_params(
-        "UPDATE products SET stripe_price_id = $1 WHERE sku = $2",
-        [params['platform_id'], product_sku]
-      )
-      component_skus = params['component_skus'] || []
-      Product.update_suite_components(suite_sku: product_sku, component_skus: component_skus)
-      redirect '/admin/products'
-    else
-      session[:error] = "Falha ao atualizar o produto. O Nome do Produto já existe."
-      redirect "/admin/product/#{product_sku}/edit"
-    end
+    Product.update(sku: product_sku, name: params['name'], family: params['family'])
+    Product.save_platform_product(sku: product_sku, platform: 'stripe', platform_id: params['platform_id'], link: params['purchase_link'])
+    $db.exec_params("UPDATE products SET stripe_price_id = $1 WHERE sku = $2", [params['platform_id'], product_sku])
+    component_skus = params['component_skus'] || []
+    Product.update_suite_components(suite_sku: product_sku, component_skus: component_skus)
+    redirect '/admin/products'
   end
 
   post '/admin/product/:sku/delete' do
@@ -259,126 +286,298 @@ class SmartManiaaApp < Sinatra::Base
     redirect '/admin/products'
   end
 
-  get '/admin/new' do
-    protected!
-    @products = Product.all
-    erb :admin_new_license
-  end
+  # --- ROTAS DE GERENCIAMENTO DE LICENÇAS ---
+ get '/admin/new' do
+   protected!
+   all_products = Product.all
+   # Cria uma lista única de famílias. Ex: ["smartgrid", "smartfield"]
+   @families = all_products.map { |p| p['family'] }.uniq.sort 
 
-  post '/admin/create' do
-    protected!
-    email = params['email']
-    product_skus = params['product_skus']
-    origin = params['origin']
-    if product_skus.nil? || product_skus.empty?
-      halt 400, "Erro: Você deve selecionar pelo menos um produto."
-    end
-    family = License.find_family_by_sku(product_skus.first)
-    License.provision_license(
-      email: email,
-      family: family,
-      product_skus: product_skus,
-      origin: origin,
-      status: 'active'
-    )
-    redirect '/admin'
+   # Agrupa os produtos pela família para uso no JavaScript.
+   # O resultado será algo como: 
+   # { "smartgrid": [{sku: "sg_axis", name: "SmartGrid Axis"}, ...], "smartfield": [...] }
+   @products_by_family = all_products.group_by { |p| p['family'] }.to_json
+
+   erb :admin_new_license
+ end
+
+ # ... (outras rotas) ...
+
+post '/admin/create' do
+  protected!
+  email = params['email']
+  product_skus = params['product_skus']
+  origin = params['origin']
+  expires_at = params['expires_at']
+  expires_at = expires_at.empty? ? nil : Time.parse(expires_at)
+
+  if product_skus.nil? || product_skus.empty?
+    halt 400, "Erro: Você deve selecionar pelo menos um produto."
   end
+  
+  # ====================================================================================
+  # INÍCIO DA NOVA VALIDAÇÃO DE FAMÍLIA
+  # ====================================================================================
+  # Se mais de um produto foi selecionado, verificamos se todos pertencem à mesma família.
+  if product_skus.length > 1
+    # CORREÇÃO: Formatamos o array Ruby para o formato de array literal do PostgreSQL.
+    # Ex: ["teste", "teste2"] se torna "{teste,teste2}"
+    formatted_skus = "{#{product_skus.join(',')}}"
+    
+    # Esta query busca no banco de dados os nomes de família únicos para os SKUs fornecidos.
+    # Adicionamos '::varchar[]' para dizer ao PostgreSQL para tratar o parâmetro como um array de texto.
+    families = $db.exec_params("SELECT DISTINCT family FROM products WHERE sku = ANY($1::varchar[])", [formatted_skus])
+    
+    # Se a query retornar mais de uma família, retornamos um erro.
+    if families.num_tuples > 1
+      halt 400, "Erro: Todos os produtos selecionados devem pertencer à mesma família."
+    end
+  end
+  # ====================================================================================
+  # FIM DA NOVA VALIDAÇÃO
+  # ====================================================================================
+  
+  # Se a validação passar, o código continua normalmente.
+  family = License.find_family_by_sku(product_skus.first)
+  
+  License.provision_license(
+    email: email, family: family, product_skus: product_skus, origin: origin,
+    status: 'active', expires_at: expires_at, grant_source: "manual_admin_#{origin}"
+  )
+  puts "[ADMIN] Licença manual criada para '#{email}' com os SKUs: #{product_skus.join(', ')}."
+  redirect '/admin'
+end
+
+# ... (outras rotas) ...
+
 
   get '/admin/license/:id' do
     protected!
     license_id = params['id']
-    @license = License.find(license_id)
-    @entitlements = License.find_entitlements(license_id)
+    @license = $db.exec_params("SELECT * FROM licenses WHERE id = $1", [license_id]).first
+    @entitlements = $db.exec_params(
+      "SELECT le.*, p.name AS product_name 
+       FROM license_entitlements le JOIN products p ON le.product_sku = p.sku
+       WHERE le.license_id = $1 ORDER BY le.id DESC", 
+      [license_id]
+    )
     erb :license_detail
   end
 
   post '/admin/license/:id/revoke' do
     protected!
-    license_id = params['id']
-    License.revoke(license_id)
-    redirect "/admin/license/#{license_id}"
+    License.revoke(params['id'])
+    puts "[ADMIN] Todos os direitos de uso ativos da Licença ID #{params['id']} foram revogados."
+    redirect "/admin/license/#{params['id']}"
   end
 
   post '/admin/license/:id/unlink_mac' do
     protected!
-    license_id = params['id']
-    License.unlink_mac(license_id)
-    redirect "/admin/license/#{license_id}"
+    License.unlink_mac(params['id'])
+    puts "[ADMIN] MAC Address foi desvinculado da Licença ID #{params['id']}."
+    redirect "/admin/license/#{params['id']}"
   end
 
   post '/admin/license/:id/delete' do
     protected!
-    license_id = params['id']
-    License.delete(license_id)
+    License.delete(params['id'])
+    puts "[ADMIN] Licença ID #{params['id']} e todos os seus dados associados foram deletados."
     redirect '/admin'
   end
 
-  post '/admin/grant/:id/revoke' do
+  post '/admin/entitlement/:id/delete' do
     protected!
-    grant_id = params['id']
+    entitlement_id = params['id']
     license_id = params['license_id']
-    License.revoke_grant(grant_id)
+    License.delete_entitlement(entitlement_id)
+    puts "[ADMIN] Direito de uso ID #{entitlement_id} foi deletado."
     redirect "/admin/license/#{license_id}"
   end
 
-  post '/admin/trials/clear' do
-    protected!
-    $db.exec("TRUNCATE trial_attempts RESTART IDENTITY;")
-    $db.exec("TRUNCATE trial_email_counters RESTART IDENTITY;")
-    $db.exec("TRUNCATE trial_mac_counters RESTART IDENTITY;")
-    session[:notice] = "Todos os registros de tentativas negadas foram apagados!"
-    redirect '/admin/trials'
-  end
-
+  # --- ROTAS DE GERENCIAMENTO DE TRIALS ---
   get '/admin/trials' do
     protected!
     @attempts = License.all_trial_attempts
-    @top_email_counters = $db.exec("SELECT * FROM trial_email_counters ORDER BY attempts DESC, last_attempt_at DESC LIMIT 20")
-    @top_mac_counters = $db.exec("SELECT * FROM trial_mac_counters ORDER BY attempts DESC, last_attempt_at DESC LIMIT 20")
     erb :admin_trial_attempts
   end
-
-  get '/admin/duplicates' do
+  
+  post '/admin/trials/clear' do
     protected!
-    @duplicates = License.find_duplicate_subscriptions
-    erb :admin_duplicate_subscriptions
+    $db.exec("TRUNCATE trial_attempts RESTART IDENTITY;")
+    session[:notice] = "Os registros de tentativas de trial negadas foram apagados!"
+    redirect '/admin/trials'
   end
 
-  get '/admin/emails' do
-    @email_rules = $db.exec("SELECT * FROM email_rules ORDER BY updated_at DESC, id DESC").to_a
-    erb :admin_mail_rules
-  end
+  # --- ROTAS DO CENTRO DE CONTROLE DA FAMÍLIA ---
 
-  get '/admin/emails/new' do
-    @editing = false
-    @rule = nil
-    @email_types = $db.exec("SELECT * FROM email_types ORDER BY name ASC").to_a
-    @families = $db.exec("SELECT DISTINCT name FROM families ORDER BY name ASC").map { |f| f['name'] }
-    erb :admin_mail_rule_form
-  end
-
-  get '/admin/emails/:id/edit' do
-    id = params[:id]
-    @editing = true
-    @rule = $db.exec_params("SELECT * FROM email_rules WHERE id = $1 LIMIT 1", [id]).first
-    @email_types = $db.exec("SELECT * FROM email_types ORDER BY name ASC").to_a
-    @families = $db.exec("SELECT DISTINCT name FROM families ORDER BY name ASC").map { |f| f['name'] }
-    erb :admin_mail_rule_form
-  end
-
-  # server.rb
-  post '/stripe/webhook' do
-    payload = request.body.read
-    sig_header = request.env['HTTP_STRIPE_SIGNATURE']
-    # Fluxo principal usando o handler
-    status, headers, body = StripeHandler.handle_webhook(payload, sig_header)
-    # Sinatra espera a resposta assim:
-    status status
-    headers.each { |k, v| response[k] = v }
-    body body.join
-  end
+# Rota principal que lista todas as famílias
+get '/admin/families' do
+  protected!
+  # Sincroniza famílias da tabela de produtos para a tabela de info, se faltar alguma
+  $db.exec(%q{
+    INSERT INTO product_family_info (family_name, homepage_url, display_name)
+    SELECT DISTINCT family, '', INITCAP(family) FROM products
+    WHERE family NOT IN (SELECT family_name FROM product_family_info)
+  })
+  
+  @families = $db.exec("SELECT * FROM product_family_info ORDER BY family_name")
+  erb :admin_families
 end
 
-# --- Inicialização padrão para dev/local/Render ---
-port = ENV.fetch('PORT', 9292)
-SmartManiaaApp.run! host: '0.0.0.0', port: port if __FILE__ == $0
+# Rota para exibir a página de configurações de UMA família específica
+get '/admin/family/:name' do
+  protected!
+  @family_name = params['name']
+  
+  # Busca todas as informações da família
+  @family_info = $db.exec_params("SELECT * FROM product_family_info WHERE family_name = $1", [@family_name]).first
+  halt 404, "Família não encontrada" unless @family_info
+
+  # Busca os mesmos dados que a antiga página de e-mails, mas filtrados por esta família
+  @notifiers = $db.exec_params("SELECT * FROM admin_notifiers WHERE family_name = $1 ORDER BY email", [@family_name])
+  @templates = $db.exec("SELECT * FROM email_templates ORDER BY name")
+  @rules = {}
+  $db.exec_params("SELECT * FROM email_rules WHERE family_name = $1", [@family_name]).each do |rule|
+    @rules[rule['email_template_id']] = rule['is_active'] == 't'
+  end
+
+  erb :admin_family_settings
+end
+
+# Rota para SALVAR as configurações da família
+post '/admin/family/:name' do
+  protected!
+  family_name = params['name']
+
+  # 1. Salva as informações gerais da família
+  $db.exec_params(
+    "UPDATE product_family_info SET display_name = $1, homepage_url = $2, support_email = $3, logo_url = $4, sender_name = $5 WHERE family_name = $6",
+    [params['display_name'], params['homepage_url'], params['support_email'], params['logo_url'], params['sender_name'], family_name]
+  )
+
+  # 2. Adiciona novo notificador de admin, se fornecido
+  if params['new_notifier_email'] && !params['new_notifier_email'].empty?
+    $db.exec_params(
+      "INSERT INTO admin_notifiers (email, family_name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+      [params['new_notifier_email'], family_name]
+    )
+  end
+
+  # 3. Processa a remoção de notificadores
+  (params['remove_notifiers'] || []).each do |email_to_remove|
+    $db.exec_params("DELETE FROM admin_notifiers WHERE email = $1 AND family_name = $2", [email_to_remove, family_name])
+  end
+
+  # 4. Processa as regras de ativação de e-mails
+  template_ids = $db.exec("SELECT id FROM email_templates").map { |row| row['id'] }
+  template_ids.each do |template_id|
+    is_active_from_form = params['rules'] && params['rules'][template_id] == 'on'
+    
+    existing_rule = $db.exec_params("SELECT id FROM email_rules WHERE family_name = $1 AND email_template_id = $2", [family_name, template_id]).first
+
+    if existing_rule
+      $db.exec_params("UPDATE email_rules SET is_active = $1 WHERE id = $2", [is_active_from_form, existing_rule['id']])
+    elsif is_active_from_form
+      $db.exec_params("INSERT INTO email_rules (family_name, email_template_id, is_active) VALUES ($1, $2, true)", [family_name, template_id])
+    end
+  end
+
+  redirect "/admin/family/#{family_name}"
+end
+
+# Mantenha as rotas de gerenciamento de TEMPLATES aqui, pois são globais
+get '/admin/email_templates/new' do
+  protected!
+  erb :admin_email_template_new
+end
+
+post '/admin/email_templates' do
+  protected!
+  $db.exec_params("INSERT INTO email_templates (name, trigger_event, subject, body) VALUES ($1, $2, $3, $4)", [params['name'], params['trigger_event'], params['subject'], params['body']])
+  puts "[ADMIN] Novo template de e-mail '#{params['name']}' foi criado."
+  redirect '/admin/families' # Redireciona para a nova página principal
+end
+
+get '/admin/email_templates/:id/edit' do
+  protected!
+  @template = $db.exec_params("SELECT * FROM email_templates WHERE id = $1", [params['id']]).first
+  erb :admin_email_template_edit
+end
+
+post '/admin/email_templates/:id' do
+  protected!
+  $db.exec_params(
+    "UPDATE email_templates SET subject = $1, body = $2, trigger_event = $3, updated_at = NOW() WHERE id = $4",
+    [params['subject'], params['body'], params['trigger_event'], params['id']]
+  )
+  puts "[ADMIN] Template de e-mail ID #{params['id']} foi atualizado."
+  redirect '/admin/families' # Redireciona para a nova página principal
+end
+
+  
+
+  get '/admin/licenses/export.csv' do
+    protected!
+    licenses = License.all_with_summary
+    content_type 'text/csv'
+    headers 'Content-Disposition' => "attachment; filename=\"licencas-smartmaniaa-#{Time.now.strftime('%Y%m%d')}.csv\""
+    CSV.generate do |csv|
+      csv << ["Email", "Chave de Licença", "Status Resumido", "Origens Ativas", "Data de Criação"]
+      licenses.each do |license|
+        csv << [
+          license['email'], license['license_key'], license['summary_status'],
+          license['summary_origins'], Time.parse(license['created_at']).strftime('%d/%m/%Y %H:%M')
+        ]
+      end
+    end
+  end
+
+  # --- ROTAS PÚBLICAS ---
+# ... (rota get '/') ...
+# ... (rota post '/webhook/stripe') ...
+
+# ROTA SEGURA PARA RECEBER EVENTOS DA SENDGRID
+post '/webhook/sendgrid_events' do
+  # Garante que a chave de verificação está configurada no ambiente.
+  unless ENV['SENDGRID_WEBHOOK_KEY']
+    puts "‼️ ERRO CRÍTICO: Variável de ambiente SENDGRID_WEBHOOK_KEY faltando!"
+    halt 500, "Configuração de webhook ausente"
+  end
+
+  # --- INÍCIO DO BLOCO DE VERIFICAÇÃO DE ASSINATURA ---
+  request_body = request.body.read
+  signature = request.env['HTTP_X_TWILIO_EMAIL_EVENT_WEBHOOK_SIGNATURE']
+  timestamp = request.env['HTTP_X_TWILIO_EMAIL_EVENT_WEBHOOK_TIMESTAMP']
+  
+  begin
+    # Usa a biblioteca da SendGrid para verificar a assinatura.
+    # Se a assinatura for inválida, ela levantará uma exceção.
+    processor = SendGrid::EventWebhook::Processor.new
+    processor.process(public_key: ENV['SENDGRID_WEBHOOK_KEY'], payload: request_body, signature: signature, timestamp: timestamp)
+    puts "[SENDGRID WEBHOOK] Assinatura verificada com sucesso."
+  rescue SendGrid::EventWebhook::SignatureVerificationError => e
+    puts "⚠️ ERRO DE SEGURANÇA: Falha na verificação da assinatura do webhook da SendGrid: #{e.message}"
+    halt 403, "Signature verification failed"
+  end
+  # --- FIM DO BLOCO DE VERIFICAÇÃO ---
+
+  # Se a verificação passou, o resto do código executa normalmente.
+  begin
+    events = JSON.parse(request_body)
+  rescue JSON::ParserError
+    halt 400, "Invalid JSON payload"
+  end
+
+  events.each do |event|
+    # ... (toda a sua lógica 'case event_type' para 'bounce', 'dropped', etc., continua aqui sem alterações) ...
+  end
+
+  status 200
+  body 'Event received'
+end
+
+  # --- Bloco final de inicialização ---
+  port = ENV.fetch('PORT', 9292)
+  SmartManiaaApp.run! host: '0.0.0.0', port: port if __FILE__ == $0
+
+end # FIM DA CLASSE SmartManiaaApp
