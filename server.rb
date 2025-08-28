@@ -67,6 +67,20 @@ class SmartManiaaApp < Sinatra::Base
     end
   end
 
+  # Garante que a conexão com o banco de dados esteja sempre ativa antes de cada requisição.
+  before do
+    begin
+      # Verifica o status da conexão. Se não estiver OK, ele levanta uma exceção.
+      # O método .check é muito mais leve que fazer uma query.
+      $db.check
+    rescue PG::Error
+      # Se a conexão falhou, reconecta usando a mesma lógica do seu bloco 'configure'.
+      puts "[DB] Conexão com o banco de dados perdida ou inválida. Reconectando..."
+      $db = PG.connect(ENV['DATABASE_URL'], sslmode: 'require')
+    end
+  end
+  # --- FIM DO BLOCO NOVO ---
+
   # --- ROTAS PÚBLICAS ---
   get '/' do
     content_type :json
