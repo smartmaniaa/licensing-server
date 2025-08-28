@@ -67,19 +67,22 @@ class SmartManiaaApp < Sinatra::Base
     end
   end
 
+  # --- BLOCO DE VERIFICAÇÃO DE CONEXÃO (VERSÃO CORRIGIDA) ---
   # Garante que a conexão com o banco de dados esteja sempre ativa antes de cada requisição.
   before do
     begin
-      # Verifica o status da conexão. Se não estiver OK, ele levanta uma exceção.
-      # O método .check é muito mais leve que fazer uma query.
-      $db.check
-    rescue PG::Error
-      # Se a conexão falhou, reconecta usando a mesma lógica do seu bloco 'configure'.
-      puts "[DB] Conexão com o banco de dados perdida ou inválida. Reconectando..."
+      # A maneira mais simples de verificar a conexão é executar uma query trivial.
+      # Se a conexão estiver 'morta', esta linha irá gerar uma exceção.
+      $db.exec("SELECT 1")
+    rescue PG::Error => e
+      # Se a conexão falhou, logamos o erro original e tentamos reconectar.
+      puts "[DB] Conexão com o banco de dados perdida. Tentando reconectar... Erro original: #{e.message}"
       $db = PG.connect(ENV['DATABASE_URL'], sslmode: 'require')
+      puts "[DB] Reconectado com sucesso!"
     end
   end
   # --- FIM DO BLOCO NOVO ---
+
 
   # --- ROTAS PÚBLICAS ---
   get '/' do
