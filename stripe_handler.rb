@@ -25,14 +25,23 @@ module StripeHandler
     end
   end
 
-  def self.handle_webhook(payload, sig_header)
+def self.handle_webhook(payload, sig_header)
     event_data = nil
     begin
       if sig_header == "dummy_signature_for_test"
+        # MODO DE TESTE: Apenas parseamos o JSON para um Hash com chaves de string.
         event_data = JSON.parse(payload)
+        puts "[STRIPE] Webhook de TESTE recebido. Pulando verificação de assinatura."
       else
-        event = Stripe::Webhook.construct_event(payload, sig_header, ENV['STRIPE_WEBHOOK_SECRET'])
-        event_data = event.to_h
+        # MODO DE PRODUÇÃO:
+        # Passo 1: Usamos construct_event apenas para a sua principal função: verificar a assinatura.
+        # Se a assinatura for inválida, este método levantará uma exceção e o código irá parar aqui.
+        Stripe::Webhook.construct_event(payload, sig_header, ENV['STRIPE_WEBHOOK_SECRET'])
+        
+        # Passo 2: Se a verificação passou, nós parseamos o payload para um Hash com chaves de string,
+        # garantindo 100% de consistência com o modo de teste.
+        event_data = JSON.parse(payload)
+        puts "[STRIPE] Webhook de PRODUÇÃO recebido. Assinatura verificada com sucesso."
       end
     rescue JSON::ParserError => e
       puts "⚠️ ERRO: Falha no parse do JSON do webhook: #{e.message}"
@@ -41,9 +50,10 @@ module StripeHandler
       puts "⚠️ ERRO: Falha na verificação da assinatura do webhook: #{e.message}"
       return [403, {}, ['Signature verification failed']]
     end
+
+    # Passamos o Hash consistente para o método de processamento.
     return process_event(event_data)
   end
-
   private
 
   def self.process_event(event)
