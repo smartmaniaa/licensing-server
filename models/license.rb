@@ -28,17 +28,15 @@ class License
     result.ntuples > 0
   end
 
-  # Versão final e completa do provision_license
+  #-- Orquestrador principal: provisiona novos direitos de uso e dispara e-mails (VERSÃO FINAL COMPLETA)
   def self.provision_license(email:, family:, product_skus:, origin:, grant_source:, trial_expires_at: nil, expires_at: nil, status: 'active', platform_subscription_id: nil, mac_address: nil, locale: nil, stripe_customer_id: nil)
     conn = $db
     license_id, key, was_new_license = find_or_create_by_email_and_family(email, family)
 
-    # Salva/atualiza o ID do cliente do Stripe na licença, se fornecido
     if stripe_customer_id
       conn.exec_params("UPDATE licenses SET stripe_customer_id = $1 WHERE id = $2", [stripe_customer_id, license_id])
     end
     
-    # --- CAMADA 1: E-MAIL OBRIGATÓRIO DE CRIAÇÃO DE CHAVE ---
     if was_new_license
       begin
         puts "[EMAIL CAMADA 1] Chave nova criada. Enviando e-mail padrão com a chave."
@@ -48,7 +46,6 @@ class License
       end
     end
 
-    # --- LÓGICA DE NEGÓCIO PRINCIPAL ---
     if locale
       conn.exec_params("UPDATE licenses SET locale = $1 WHERE id = $2 AND locale IS NULL", [locale, license_id])
       puts "[LICENSE] Locale '#{locale}' salvo para a licença ID #{license_id}."
@@ -65,7 +62,6 @@ class License
 
     full_product_skus = expand_suites(product_skus)
 
-    # LÓGICA CRÍTICA DE CRIAÇÃO DOS DIREITOS DE USO (ENTITLEMENTS)
     full_product_skus.each do |sku|
       if platform_subscription_id
         existing = conn.exec_params(
@@ -85,7 +81,6 @@ class License
       conn.exec_params("INSERT INTO entitlement_grants (license_entitlement_id, grant_source) VALUES ($1, $2)", [entitlement_id, grant_source])
     end
 
-    # --- CAMADA 2: E-MAILS OPCIONAIS BASEADOS EM GATILHOS ---
     begin
       trigger = nil
       if status == 'trial'
@@ -121,7 +116,6 @@ class License
 
     [license_id, key, was_new_license]
   end
-
   #-- MÉTODOS DE ATUALIZAÇÃO VIA STRIPE
   def self.update_entitlement_from_stripe(subscription_id:, new_expires_at:, new_status: 'active')
     $db.exec_params("UPDATE license_entitlements SET expires_at = $1, status = $2 WHERE platform_subscription_id = $3", [new_expires_at, new_status, subscription_id])
