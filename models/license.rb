@@ -5,10 +5,11 @@ require 'date'
 
 class License
 
-  #-- Encontra ou cria o "container" da licença (tabela 'licenses').
+   # Garante que sempre encontre a licença correta, independente de pequenas variações
   def self.find_or_create_by_email_and_family(email, family)
     conn = $db
-    result = conn.exec_params("SELECT * FROM licenses WHERE email = $1 AND family = $2 LIMIT 1", [email, family])
+    # Busca por email e família, ignorando maiúsculas/minúsculas
+    result = conn.exec_params("SELECT * FROM licenses WHERE lower(email) = lower($1) AND lower(family) = lower($2) LIMIT 1", [email, family])
     if result.num_tuples > 0
       [result[0]['id'], result[0]['license_key'], false]
     else
@@ -27,12 +28,12 @@ class License
     result.ntuples > 0
   end
 
-  #-- Orquestrador principal: provisiona novos direitos de uso e dispara e-mails (VERSÃO FINAL)
+  # Versão final e completa do provision_license
   def self.provision_license(email:, family:, product_skus:, origin:, grant_source:, trial_expires_at: nil, expires_at: nil, status: 'active', platform_subscription_id: nil, mac_address: nil, locale: nil, stripe_customer_id: nil)
     conn = $db
     license_id, key, was_new_license = find_or_create_by_email_and_family(email, family)
 
-    # NOVO BLOCO: Salva/atualiza o ID do cliente do Stripe na licença, se fornecido
+    # Salva/atualiza o ID do cliente do Stripe na licença, se fornecido
     if stripe_customer_id
       conn.exec_params("UPDATE licenses SET stripe_customer_id = $1 WHERE id = $2", [stripe_customer_id, license_id])
     end
@@ -109,7 +110,6 @@ class License
         )
       end
 
-      # A notificação para o admin continua sendo enviada normalmente.
       Mailer.send_admin_notification(
         subject: "Nova Licença (#{origin}) para a família '#{family}'",
         body: "Direito de uso criado para #{email} na família '#{family}'. SKUs: #{full_product_skus.join(', ')}",
