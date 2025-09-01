@@ -179,26 +179,26 @@ class License
     all_skus.uniq
   end
 
- #-- MÉTODO DE BUSCA PARA O PAINEL DE ADMIN (VERSÃO CORRIGIDA)
+#-- MÉTODO DE BUSCA PARA O PAINEL DE ADMIN (VERSÃO FINAL CORRIGIDA)
   def self.all_with_summary
     $db.exec(%q{
       SELECT
         licenses.*,
         COALESCE(
-          -- Prioriza mostrar 'Trial' se houver um direito de uso de trial ativo.
+          -- CORREÇÃO: 1. Primeiro, procuramos por um status 'Ativo' (pago).
+          (SELECT 'Ativo' FROM license_entitlements le
+           WHERE le.license_id = licenses.id AND le.status = 'active' LIMIT 1),
+           
+          -- 2. Se não for pago, procuramos por um 'Trial' ainda válido.
           (SELECT 'Trial' FROM license_entitlements le
            WHERE le.license_id = licenses.id AND le.status = 'trial' 
            AND (le.trial_expires_at > NOW() OR le.trial_expires_at IS NULL) LIMIT 1),
            
-          -- Se não for trial, procura por um direito 'Ativo'.
-          (SELECT 'Ativo' FROM license_entitlements le
-           WHERE le.license_id = licenses.id AND le.status = 'active' LIMIT 1),
-           
-          -- Se não encontrar nenhum dos dois, a licença é 'Inativo'.
+          -- 3. Se não encontrar nenhum dos dois, a licença é 'Inativo'.
           'Inativo'
         ) AS summary_status,
         
-        -- A lista de origens agora inclui 'trial' para licenças ativas ou em trial.
+        -- A lista de origens continua correta, mostrando ambas.
         (SELECT string_agg(DISTINCT le.origin, ', ')
          FROM license_entitlements le
          WHERE le.license_id = licenses.id AND le.status IN ('active', 'trial')) AS summary_origins
