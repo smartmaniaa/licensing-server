@@ -56,7 +56,72 @@ module StripeHandler
       puts "[STRIPE] Cliente '#{email}' (ID: #{customer_id}) salvo/atualizado no banco local."
       return [200, {}, ['Cliente processado com sucesso']]
 
+# ---- Dentro de stripe_handler.rb, dentro do método process_event ----
+
+    # =================================================================
+    # V CORREÇÃO APLICADA AQUI V
+    # =================================================================
     when 'customer.subscription.created'
+      subscription_data = event[:data][:object]
+      subscription_id = subscription_data[:id]
+      customer_id = subscription_data[:customer]
+
+      # Proteção contra reprocessamento (continua igual)
+      existing_entitlement = $db.exec_params("SELECT 1 FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id])
+      if existing_entitlement.num_tuples > 0
+        puts "[STRIPE] Ignorando 'customer.subscription.created' pois já foi processada."
+        return [200, {}, ['Assinatura já processada']]
+      end
+      
+      begin
+        # Lógica para obter dados do cliente (continua igual)
+        customer_info_from_db = $db.exec_params("SELECT email, locale, phone FROM stripe_customers WHERE stripe_customer_id = $1 LIMIT 1", [customer_id]).first
+        customer_email, customer_locale, customer_phone = nil, nil, nil
+        if customer_info_from_db
+          customer_email, customer_locale, customer_phone = customer_info_from_db.values_at('email', 'locale', 'phone')
+        else
+          customer_from_api = Stripe::Customer.retrieve(customer_id)
+          customer_email, customer_locale, customer_phone = customer_from_api.email, customer_from_api.preferred_locales&.first, customer_from_api.phone
+        end
+        unless customer_email
+          puts "‼️ ERRO CRÍTICO: Não foi possível obter o e-mail do cliente #{customer_id}."
+          return [500, {}, ['E-mail do cliente não pôde ser determinado']]
+        end
+
+        # Lógica para encontrar o SKU (continua igual)
+        product_skus = subscription_data[:items][:data].flat_map { |item| stripe_price_to_sku_mapping[item[:price][:id]] }.compact.uniq
+        if product_skus.empty?
+          puts "‼️ ERRO: Nenhum SKU correspondente encontrado para os price_ids na assinatura #{subscription_id}."
+          return [400, {}, ['Nenhum SKU válido encontrado']]
+        end
+        family = License.find_family_by_sku(product_skus.first)
+
+        # --- OTIMIZAÇÃO E CORREÇÃO ---
+        # Removida a chamada desnecessária: Stripe::Subscription.retrieve(subscription_id)
+        # Agora usamos 'subscription_data' que veio no evento.
+        expires_at = Time.at(subscription_data[:current_period_end])
+        status = subscription_data[:status] == 'trialing' ? 'trial' : 'active'
+        trial_expires_at = subscription_data[:trial_end] ? Time.at(subscription_data[:trial_end]) : nil
+        
+        # O resto da chamada para provisionar a licença (continua igual)
+        License.provision_license(
+          email: customer_email, family: family, product_skus: product_skus, origin: 'stripe',
+          grant_source: "stripe_sub:#{subscription_id}", status: status, expires_at: expires_at,
+          trial_expires_at: trial_expires_at,
+          platform_subscription_id: subscription_id,
+          locale: customer_locale,
+          stripe_customer_id: customer_id,
+          phone: customer_phone
+        )
+        puts "[STRIPE] Sucesso: Direito de uso provisionado para '#{customer_email}' via Assinatura #{subscription_id}."
+      rescue => e
+        puts "‼️ ERRO inesperado ao processar customer.subscription.created: #{e.class} - #{e.message}\n#{e.backtrace.join("\n")}"
+        return [500, {}, ['Erro interno ao provisionar direito de uso']]
+      end
+      return [200, {}, ['Direito de uso provisionado com sucesso']]
+    # =================================================================
+    # ^ FIM DA CORREÇÃO ^
+    # =================================================================
       subscription_data = event[:data][:object]
       subscription_id = subscription_data[:id]
       customer_id = subscription_data[:customer]
