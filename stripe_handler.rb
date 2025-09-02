@@ -1,4 +1,4 @@
-# ---- stripe_handler.rb (VERSÃO CORRIGIDA - CHAVES DE SÍMBOLO) ----
+# ---- stripe_handler.rb (VERSÃO FINAL E RESILIENTE) ----
 require 'stripe'
 require 'json'
 require 'time'
@@ -15,21 +15,10 @@ module StripeHandler
     mapping
   end
 
-  def self.all_family_skus_from_subscription(subscription_id)
-    begin
-      subscription = Stripe::Subscription.retrieve(subscription_id)
-      return subscription.items.data.flat_map { |item| stripe_price_to_sku_mapping[item.price.id] }.compact.uniq
-    rescue => e
-      puts "[STRIPE] Alerta: Não foi possível buscar a assinatura #{subscription_id}. Erro: #{e.message}"
-      return []
-    end
-  end
-
   def self.handle_webhook(payload, sig_header)
     event_data = nil
     begin
       if sig_header == "dummy_signature_for_test"
-        # Para testes, convertemos as chaves para símbolos para simular o comportamento real
         event_data = JSON.parse(payload, symbolize_names: true)
       else
         event = Stripe::Webhook.construct_event(payload, sig_header, ENV['STRIPE_WEBHOOK_SECRET'])
@@ -50,7 +39,7 @@ module StripeHandler
     event_id = event[:id]
     puts "[STRIPE] Webhook processando: Tipo '#{event_type}', ID '#{event_id}'"
 
-    case event_type.to_s # .to_s para garantir a comparação segura
+    case event_type.to_s
     
     when 'customer.created', 'customer.updated'
       customer_data = event[:data][:object]
@@ -67,10 +56,6 @@ module StripeHandler
       puts "[STRIPE] Cliente '#{email}' (ID: #{customer_id}) salvo/atualizado no banco local."
       return [200, {}, ['Cliente processado com sucesso']]
 
-    # Dentro do método process_event em stripe_handler.rb
-
-    # Dentro do método process_event em stripe_handler.rb
-
     when 'customer.subscription.created'
       subscription_data = event[:data][:object]
       subscription_id = subscription_data[:id]
@@ -83,131 +68,29 @@ module StripeHandler
       end
       
       begin
-        # Busca informações do cliente (lógica existente, sem alterações)
         customer_info = $db.exec_params("SELECT email, locale, phone FROM stripe_customers WHERE stripe_customer_id = $1 LIMIT 1", [customer_id]).first
         unless customer_info
           customer_details = Stripe::Customer.retrieve(customer_id)
-          customer_email = customer_details.email
-          customer_locale = customer_details.preferred_locales&.first
-          customer_phone = customer_details.phone
+          customer_email = customer_details.email; customer_locale = customer_details.preferred_locales&.first; customer_phone = customer_details.phone
         else
-          customer_email = customer_info['email']
-          customer_locale = customer_info['locale']
-          customer_phone = customer_info['phone']
+          customer_email = customer_info['email']; customer_locale = customer_info['locale']; customer_phone = customer_info['phone']
         end
 
         product_skus = subscription_data[:items][:data].flat_map { |item| stripe_price_to_sku_mapping[item[:price][:id]] }.compact.uniq
         if product_skus.empty?
-          puts "[STRIPE] ERRO: Nenhum SKU válido encontrado para a assinatura #{subscription_id}."
           return [400, {}, ['Nenhum SKU válido encontrado']]
         end
         family = License.find_family_by_sku(product_skus.first)
 
-        # --- CORREÇÃO APLICADA AQUI ---
-        # Buscamos a assinatura direto da API para garantir que temos os dados completos.
         subscription = Stripe::Subscription.retrieve(subscription_id)
-        
-        # Agora usamos os dados do objeto 'subscription' que são sempre confiáveis.
         expires_at = Time.at(subscription.current_period_end)
         status = subscription.status == 'trialing' ? 'trial' : 'active'
         trial_expires_at = subscription.trial_end ? Time.at(subscription.trial_end) : nil
-        # --- FIM DA CORREÇÃO ---
         
         License.provision_license(
           email: customer_email, family: family, product_skus: product_skus, origin: 'stripe',
           grant_source: "stripe_sub:#{subscription_id}", status: status, expires_at: expires_at,
           trial_expires_at: trial_expires_at,
-          platform_subscription_id: subscription_id,
-          locale: customer_locale,
-          stripe_customer_id: customer_id,
-          phone: customer_phone
-        )
-        puts "[STRIPE] Sucesso: Direito de uso provisionado para '#{customer_email}' via Assinatura #{subscription_id}."
-      rescue => e
-        puts "‼️ ERRO inesperado ao processar customer.subscription.created: #{e.class} - #{e.message}\n#{e.backtrace.join("\n")}"
-        return [500, {}, ['Erro interno ao provisionar direito de uso']]
-      end
-      return [200, {}, ['Direito de uso provisionado com sucesso']]
-      subscription_data = event[:data][:object]
-      subscription_id = subscription_data[:id]
-      customer_id = subscription_data[:customer]
-
-      # ... (lógica para verificar se já existe e buscar cliente - sem alterações) ...
-      
-      begin
-        # ... (código para buscar informações do cliente - sem alterações) ...
-
-        product_skus = subscription_data[:items][:data].flat_map { |item| stripe_price_to_sku_mapping[item[:price][:id]] }.compact.uniq
-        if product_skus.empty?
-          # ... (lógica de erro de SKU - sem alterações) ...
-        end
-        family = License.find_family_by_sku(product_skus.first)
-
-        # --- CORREÇÃO APLICADA AQUI ---
-        # Em vez de confiar nos dados do webhook, que podem estar incompletos,
-        # buscamos a assinatura direto da API para garantir que temos todos os dados.
-        subscription = Stripe::Subscription.retrieve(subscription_id)
-        expires_at = Time.at(subscription.current_period_end)
-        status = subscription.status == 'trialing' ? 'trial' : 'active'
-        trial_expires_at = subscription.trial_end ? Time.at(subscription.trial_end) : nil
-        # --- FIM DA CORREÇÃO ---
-        
-        License.provision_license(
-          email: customer_email, family: family, product_skus: product_skus, origin: 'stripe',
-          grant_source: "stripe_sub:#{subscription_id}", status: status, expires_at: expires_at,
-          trial_expires_at: trial_expires_at, # Passando a data de expiração do trial
-          platform_subscription_id: subscription_id,
-          locale: customer_locale,
-          stripe_customer_id: customer_id,
-          phone: customer_phone
-        )
-        puts "[STRIPE] Sucesso: Direito de uso provisionado para '#{customer_email}' via Assinatura #{subscription_id}."
-      rescue => e
-        puts "‼️ ERRO inesperado ao processar customer.subscription.created: #{e.class} - #{e.message}\n#{e.backtrace.join("\n")}"
-        return [500, {}, ['Erro interno ao provisionar direito de uso']]
-      end
-      return [200, {}, ['Direito de uso provisionado com sucesso']]
-      subscription_data = event[:data][:object]
-      subscription_id = subscription_data[:id]
-      customer_id = subscription_data[:customer]
-
-      existing_entitlement = $db.exec_params("SELECT 1 FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id])
-      if existing_entitlement.num_tuples > 0
-        puts "[STRIPE] Ignorando 'customer.subscription.created' pois já foi processada."
-        return [200, {}, ['Assinatura já processada']]
-      end
-      
-      begin
-        customer_info = $db.exec_params("SELECT email, locale, phone FROM stripe_customers WHERE stripe_customer_id = $1 LIMIT 1", [customer_id]).first
-        unless customer_info
-          puts "‼️ AVISO: Cliente #{customer_id} não encontrado. Fazendo fallback para a API."
-          customer_details = Stripe::Customer.retrieve(customer_id)
-          customer_email = customer_details.email
-          customer_locale = customer_details.preferred_locales&.first
-          customer_phone = customer_details.phone
-        else
-          customer_email = customer_info['email']
-          customer_locale = customer_info['locale']
-          customer_phone = customer_info['phone']
-        end
-
-        product_skus = subscription_data[:items][:data].flat_map { |item| stripe_price_to_sku_mapping[item[:price][:id]] }.compact.uniq
-        if product_skus.empty?
-          puts "[STRIPE] ERRO: Nenhum SKU válido encontrado para a assinatura #{subscription_id}."
-          return [400, {}, ['Nenhum SKU válido encontrado']]
-        end
-        family = License.find_family_by_sku(product_skus.first)
-
-        status = 'active'
-        expires_at = if subscription_data[:status].to_s == 'trialing'
-                       Time.at(subscription_data[:trial_end])
-                     else
-                       Time.at(subscription_data[:current_period_end])
-                     end
-        
-        License.provision_license(
-          email: customer_email, family: family, product_skus: product_skus, origin: 'stripe',
-          grant_source: "stripe_sub:#{subscription_id}", status: status, expires_at: expires_at,
           platform_subscription_id: subscription_id,
           locale: customer_locale,
           stripe_customer_id: customer_id,
