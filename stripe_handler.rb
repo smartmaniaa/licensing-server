@@ -67,7 +67,48 @@ module StripeHandler
       puts "[STRIPE] Cliente '#{email}' (ID: #{customer_id}) salvo/atualizado no banco local."
       return [200, {}, ['Cliente processado com sucesso']]
 
+    # Dentro do método process_event em stripe_handler.rb
+
     when 'customer.subscription.created'
+      subscription_data = event[:data][:object]
+      subscription_id = subscription_data[:id]
+      customer_id = subscription_data[:customer]
+
+      # ... (lógica para verificar se já existe e buscar cliente - sem alterações) ...
+      
+      begin
+        # ... (código para buscar informações do cliente - sem alterações) ...
+
+        product_skus = subscription_data[:items][:data].flat_map { |item| stripe_price_to_sku_mapping[item[:price][:id]] }.compact.uniq
+        if product_skus.empty?
+          # ... (lógica de erro de SKU - sem alterações) ...
+        end
+        family = License.find_family_by_sku(product_skus.first)
+
+        # --- CORREÇÃO APLICADA AQUI ---
+        # Em vez de confiar nos dados do webhook, que podem estar incompletos,
+        # buscamos a assinatura direto da API para garantir que temos todos os dados.
+        subscription = Stripe::Subscription.retrieve(subscription_id)
+        expires_at = Time.at(subscription.current_period_end)
+        status = subscription.status == 'trialing' ? 'trial' : 'active'
+        trial_expires_at = subscription.trial_end ? Time.at(subscription.trial_end) : nil
+        # --- FIM DA CORREÇÃO ---
+        
+        License.provision_license(
+          email: customer_email, family: family, product_skus: product_skus, origin: 'stripe',
+          grant_source: "stripe_sub:#{subscription_id}", status: status, expires_at: expires_at,
+          trial_expires_at: trial_expires_at, # Passando a data de expiração do trial
+          platform_subscription_id: subscription_id,
+          locale: customer_locale,
+          stripe_customer_id: customer_id,
+          phone: customer_phone
+        )
+        puts "[STRIPE] Sucesso: Direito de uso provisionado para '#{customer_email}' via Assinatura #{subscription_id}."
+      rescue => e
+        puts "‼️ ERRO inesperado ao processar customer.subscription.created: #{e.class} - #{e.message}\n#{e.backtrace.join("\n")}"
+        return [500, {}, ['Erro interno ao provisionar direito de uso']]
+      end
+      return [200, {}, ['Direito de uso provisionado com sucesso']]
       subscription_data = event[:data][:object]
       subscription_id = subscription_data[:id]
       customer_id = subscription_data[:customer]
