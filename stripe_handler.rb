@@ -77,7 +77,23 @@ def self.handle_webhook(payload, sig_header)
       puts "[STRIPE] Cliente '#{email}' (ID: #{customer_id}) salvo/atualizado no banco local."
       return [200, {}, ['Cliente processado com sucesso']]
 
-    when 'customer.subscription.created'
+    # ---- BLOCO NOVO (customer.created / customer.updated) ----
+    when 'customer.created', 'customer.updated'
+      customer_data = event['data']['object']
+      customer_id = customer_data['id']
+      email = customer_data['email']
+      locale = (customer_data['preferred_locales'] || []).first
+      name = customer_data['name']
+      phone = customer_data['phone'] # <-- 1. CAPTURA O TELEFONE
+
+      # 2. ADICIONA O TELEFONE NA QUERY DO BANCO DE DADOS
+      $db.exec_params(
+        "INSERT INTO stripe_customers (stripe_customer_id, email, locale, name, phone) VALUES ($1, $2, $3, $4, $5) " +
+        "ON CONFLICT (stripe_customer_id) DO UPDATE SET email = $2, locale = $3, name = $4, phone = $5, updated_at = NOW()",
+        [customer_id, email, locale, name, phone]
+      )
+      puts "[STRIPE] Cliente '#{email}' (ID: #{customer_id}) salvo/atualizado no banco local."
+      return [200, {}, ['Cliente processado com sucesso']]
       subscription_data = event['data']['object']
       subscription_id = subscription_data['id']
       customer_id = subscription_data['customer']
