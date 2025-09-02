@@ -4,44 +4,115 @@
   <meta charset="UTF-8">
   <title>Detalhes da Licença - SmartManiaa</title>
   <style>
-    /* Estilos completos para a página */
+    /* Estilos Gerais */
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 2em; background-color: #f4f6f8; color: #333; }
     .container { max-width: 900px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
     h1, h2 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
-    ul { list-style-type: none; padding: 0; }
-    li { background-color: #f9f9f9; padding: 10px; border: 1px solid #ddd; margin-bottom: 10px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
-    table { width: 100%; border-collapse: collapse; margin-top: 1em; }
-    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #ddd; }
-    th { background-color: #ecf0f1; color: #34495e; }
+    h2 { margin-top: 2.5em; }
     .back-link { display: inline-block; margin-bottom: 2em; color: #3498db; text-decoration: none; }
-    .back-link:hover { text-decoration: underline; }
-    .actions-box { margin-top: 2em; padding: 1.5em; border: 1px solid #ddd; border-radius: 8px; }
-    .actions-box form { display: inline-block; margin-right: 1em; }
-    .actions-box button { background-color: #c0392b; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; font-size: 14px; }
-    .actions-box button.unlink { background-color: #f39c12; }
+    
+    /* Estilo para a Chave Principal */
+    .main-key-info { display: flex; justify-content: space-between; align-items: center; background-color: #f0f4f8; padding: 15px; border-radius: 6px; margin-top: 1em; }
+    .main-key-info code { font-size: 1.5em; letter-spacing: 1px; font-weight: bold; background: none; padding: 0; }
+
+    /* Estilos dos Botões de Ação */
+    .btn-action { color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-size: 14px; text-decoration: none; display: inline-block; min-width: 120px; text-align: center; box-sizing: border-box; }
+    .btn-action.edit { background-color: #3498db; }
+    .btn-action.save { background-color: #2980b9; }
+    .btn-action.delete { background-color: #e74c3c; }
+    .btn-action.delete-small { padding: 4px 8px; font-size: 12px; min-width: auto; }
+
+    /* Estilo para a Tabela de Informações */
+    .info-table { width: 100%; border-collapse: collapse; margin-top: 1em; }
+    .info-table td { padding: 14px 8px; border-bottom: 1px solid #eee; vertical-align: middle; }
+    .info-table tr:last-child td { border-bottom: none; }
+    .info-table .label { font-weight: bold; color: #34495e; width: 30%; }
+    .info-table .value { text-align: left; }
+    .info-table .actions { text-align: right; width: 150px; }
+    
+    .email-status { font-weight: bold; text-transform: uppercase; font-size: 0.8em; padding: 3px 7px; border-radius: 4px; color: white; }
+    .email-status.ok { background-color: #27ae60; }
+    .email-status.bounced, .email-status.spam_report { background-color: #c0392b; }
+
+    /* Tabela de Direitos de Uso */
+    .entitlements-table { width: 100%; border-collapse: collapse; margin-top: 1em; }
+    .entitlements-table th, .entitlements-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #ddd; }
+    .entitlements-table th { background-color: #ecf0f1; color: #34495e; }
     .status-active { color: #27ae60; font-weight: bold; }
-    .status-trial { color: #2980b9; font-weight: bold; }
-    .status-revoked { color: #c0392b; font-weight: bold; }
-    .status-suspended { color: #e67e22; font-weight: bold; }
-    .btn-delete { background-color: #e74c3c; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+
+    /* Estilos para o Modal (Popup) */
+    .modal-overlay { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); }
+    .modal-content { background-color: #fefefe; margin: 15% auto; padding: 25px; border-radius: 8px; width: 90%; max-width: 500px; position: relative; }
+    .modal-close { color: #aaa; position: absolute; top: 10px; right: 20px; font-size: 28px; font-weight: bold; cursor: pointer; }
+    .form-group { margin-bottom: 1.5em; }
+    .form-group label { display: block; margin-bottom: 0.5em; font-weight: bold; }
+    .form-group input, .form-group select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+    .phone-input-group { display: flex; gap: 10px; }
   </style>
 </head>
 <body>
   <div class="container">
     <a href="/admin" class="back-link">&larr; Voltar para a lista</a>
     <h1>Detalhes da Licença</h1>
+
     <% if @license %>
-      <h2>Informações Principais (Chaveiro)</h2>
-      <ul>
-        <li><strong>ID da Licença:</strong> <span><%= @license['id'] %></span></li>
-        <li><strong>Email:</strong> <span><%= @license['email'] %></span></li>
-        <li><strong>Chave:</strong> <code><%= @license['license_key'] %></code></li>
-        <li><strong>Família:</strong> <span><%= @license['family'] %></span></li>
-        <li><strong>MAC Address Vinculado:</strong> <span><%= @license['mac_address'] || 'Nenhum' %></span></li>
-      </ul>
+      <div class="main-key-info">
+        <code><%= @license['license_key'] %></code>
+        <form action="/admin/license/<%= @license['id'] %>/delete" method="post" onsubmit="return confirm('APAGAR PERMANENTEMENTE a licença?');" style="margin:0;">
+          <button type="submit" class="btn-action delete">Deletar Licença</button>
+        </form>
+      </div>
+
+      <h2>Informações Principais</h2>
+      
+      <table class="info-table">
+        <tbody>
+          <tr>
+            <td class="label">ID da Licença:</td>
+            <td class="value"><%= @license['id'] %></td>
+            <td class="actions"></td>
+          </tr>
+          <tr>
+            <td class="label">Família:</td>
+            <td class="value"><%= @license['family'] %></td>
+            <td class="actions"></td>
+          </tr>
+          <tr>
+            <td class="label">Data de Criação:</td>
+            <td class="value"><%= Time.parse(@license['created_at']).strftime('%d/%m/%Y às %H:%M') %></td>
+            <td class="actions"></td>
+          </tr>
+          <tr>
+            <td class="label">Status do E-mail:</td>
+            <td class="value"><span class="email-status <%= @license['email_status'] %>"><%= @license['email_status'] %></span></td>
+            <td class="actions"></td>
+          </tr>
+          <tr>
+            <td class="label">Email:</td>
+            <td class="value"><%= @license['email'] %></td>
+            <td class="actions"></td>
+          </tr>
+          <tr>
+            <td class="label">Telefone:</td>
+            <td class="value"><%= @license['phone'] || 'Não cadastrado' %></td>
+            <td class="actions"><button id="editPhoneBtn" class="btn-action edit">Editar</button></td>
+          </tr>
+          <tr>
+            <td class="label">MAC Address Vinculado:</td>
+            <td class="value"><%= @license['mac_address'] || 'Nenhum' %></td>
+            <td class="actions">
+              <% if @license['mac_address'] %>
+                <form action="/admin/license/<%= @license['id'] %>/unlink_mac" method="post" onsubmit="return confirm('Desvincular máquina?');" style="margin:0;">
+                  <button type="submit" class="btn-action edit">Desvincular</button>
+                </form>
+              <% end %>
+            </td>
+          </tr>
+        </tbody>
+      </table>
 
       <h2>Direitos de Uso (Entitlements)</h2>
-      <table>
+      <table class="entitlements-table">
         <thead>
           <tr>
             <th>Produto</th>
@@ -49,34 +120,24 @@
             <th>Origem</th>
             <th>Validade</th>
             <th>ID Assinatura Stripe</th>
-            <th style="width: 80px;">Ações</th>
+            <th>Ações</th>
           </tr>
         </thead>
         <tbody>
           <% if @entitlements.num_tuples.zero? %>
-            <tr>
-              <td colspan="6" style="text-align: center;">Nenhum direito de uso encontrado para esta licença.</td>
-            </tr>
+            <tr><td colspan="6" style="text-align: center;">Nenhum direito de uso encontrado.</td></tr>
           <% else %>
             <% @entitlements.each do |entitlement| %>
               <tr>
                 <td><%= entitlement['product_name'] %></td>
                 <td><span class="status-<%= entitlement['status'] %>"><%= entitlement['status'].capitalize %></span></td>
                 <td><%= entitlement['origin'] %></td>
-                <td>
-                  <% if entitlement['trial_expires_at'] %>
-                    Trial até <%= Time.parse(entitlement['trial_expires_at']).strftime('%d/%m/%Y %H:%M') %>
-                  <% elsif entitlement['expires_at'] %>
-                    Expira em <%= Time.parse(entitlement['expires_at']).strftime('%d/%m/%Y %H:%M') %>
-                  <% else %>
-                    Vitalícia
-                  <% end %>
-                </td>
+                <td><%= entitlement['expires_at'] ? Time.parse(entitlement['expires_at']).strftime('%d/%m/%Y %H:%M') : 'Vitalícia' %></td>
                 <td><code><%= entitlement['platform_subscription_id'] || 'N/A' %></code></td>
                 <td>
-                  <form action="/admin/entitlement/<%= entitlement['id'] %>/delete" method="post" onsubmit="return confirm('Tem certeza que deseja DELETAR este direito de uso permanentemente?');">
+                  <form action="/admin/entitlement/<%= entitlement['id'] %>/delete" method="post" onsubmit="return confirm('Tem certeza?');" style="margin:0;">
                     <input type="hidden" name="license_id" value="<%= @license['id'] %>">
-                    <button type="submit" class="btn-delete">Deletar</button>
+                    <button type="submit" class="btn-action delete delete-small">Deletar</button>
                   </form>
                 </td>
               </tr>
@@ -85,21 +146,70 @@
         </tbody>
       </table>
       
-      <div class="actions-box">
-        <h2>Ações da Licença Inteira</h2>
-        <form action="/admin/license/<%= @license['id'] %>/unlink_mac" method="post" onsubmit="return confirm('Tem certeza que deseja desvincular esta licença da máquina atual?');">
-          <button type="submit" class="unlink">Desvincular Máquina</button>
-        </form>
-        <form action="/admin/license/<%= @license['id'] %>/revoke" method="post" onsubmit="return confirm('ATENÇÃO: Isso irá REVOGAR TODOS os direitos de uso ATIVOS desta licença. Confirma?');">
-          <button type="submit">Revogar Todos Direitos</button>
-        </form>
-         <form action="/admin/license/<%= @license['id'] %>/delete" method="post" onsubmit="return confirm('CUIDADO: Isso irá APAGAR PERMANENTEMENTE a licença e todos os seus direitos de uso. Deseja continuar?');">
-          <button type="submit" style="background-color: #e74c3c;">Deletar Licença</button>
-        </form>
-      </div>
-      <% else %>
+    <% else %>
       <p>Licença não encontrada.</p>
     <% end %>
   </div>
+
+  <div id="phoneModal" class="modal-overlay">
+    <div class="modal-content">
+      <span class="modal-close">&times;</span>
+      <h2>Adicionar / Editar Telefone</h2>
+      <form action="/admin/license/<%= @license['id'] %>/phone" method="post">
+        <div class="form-group">
+          <label for="phone_number">Telefone</label>
+          <div class="phone-input-group">
+            <select name="country_code" id="country_code_selector" style="width: 150px;">
+              <option value="+55" selected>Brasil (+55)</option>
+              <option value="+1">EUA (+1)</option>
+              <option value="+351">Portugal (+351)</option>
+              <option value="+44">Reino Unido (+44)</option>
+              <option value="">Outro...</option>
+            </select>
+            <input type="tel" id="phone_number" name="phone_number" placeholder="Deixe em branco para remover" style="flex-grow: 1;">
+          </div>
+          <div id="other_country_code_wrapper" style="display: none; margin-top: 10px;">
+            <label for="other_country_code">Código do País (manual)</label>
+            <input type="text" name="other_country_code" id="other_country_code" placeholder="+XX">
+          </div>
+        </div>
+        <button type="submit" class="btn-action save">Salvar Telefone</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      const modal = document.getElementById('phoneModal');
+      const btn = document.getElementById('editPhoneBtn');
+      const span = document.querySelector('.modal-close');
+      const countrySelector = document.getElementById('country_code_selector');
+      const otherCodeWrapper = document.getElementById('other_country_code_wrapper');
+
+      if (btn) {
+        btn.onclick = function() {
+          modal.style.display = 'block';
+        }
+      }
+
+      if (span) {
+        span.onclick = function() {
+          modal.style.display = 'none';
+        }
+      }
+
+      window.onclick = function(event) {
+        if (event.target == modal) {
+          modal.style.display = 'none';
+        }
+      }
+
+      if (countrySelector) {
+        countrySelector.addEventListener('change', function() {
+          otherCodeWrapper.style.display = (this.value === "") ? 'block' : 'none';
+        });
+      }
+    });
+  </script>
 </body>
 </html>

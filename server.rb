@@ -1,4 +1,4 @@
-# ---- server.rb (VERSÃO ABSOLUTAMENTE COMPLETA E FINAL) ----
+# ---- server.rb (VERSÃO FINAL, COMPLETA E CORRIGIDA) ----
 
 require 'sinatra/base'
 require 'pg'
@@ -15,7 +15,18 @@ $stdout.sync = true
 class SmartManiaaApp < Sinatra::Base
   set :bind, '0.0.0.0'
   
+  # MELHORIA: Blocos 'before' unificados para maior clareza.
   before do
+    # Garante que a conexão com o banco de dados esteja sempre ativa.
+    begin
+      $db.exec("SELECT 1")
+    rescue PG::Error => e
+      puts "[DB] Conexão com o banco de dados perdida. Tentando reconectar... Erro original: #{e.message}"
+      $db = PG.connect(ENV['DATABASE_URL'], sslmode: 'require')
+      puts "[DB] Reconectado com sucesso!"
+    end
+
+    # Bloco de debug de headers.
     puts "========= DEBUG HEADERS ========"
     puts "Host do request: #{request.host.inspect}"
     puts "Path: #{request.path_info}"
@@ -67,23 +78,6 @@ class SmartManiaaApp < Sinatra::Base
     end
   end
 
-  # --- BLOCO DE VERIFICAÇÃO DE CONEXÃO (VERSÃO CORRIGIDA) ---
-  # Garante que a conexão com o banco de dados esteja sempre ativa antes de cada requisição.
-  before do
-    begin
-      # A maneira mais simples de verificar a conexão é executar uma query trivial.
-      # Se a conexão estiver 'morta', esta linha irá gerar uma exceção.
-      $db.exec("SELECT 1")
-    rescue PG::Error => e
-      # Se a conexão falhou, logamos o erro original e tentamos reconectar.
-      puts "[DB] Conexão com o banco de dados perdida. Tentando reconectar... Erro original: #{e.message}"
-      $db = PG.connect(ENV['DATABASE_URL'], sslmode: 'require')
-      puts "[DB] Reconectado com sucesso!"
-    end
-  end
-  # --- FIM DO BLOCO NOVO ---
-
-
   # --- ROTAS PÚBLICAS ---
   get '/' do
     content_type :json
@@ -110,7 +104,13 @@ class SmartManiaaApp < Sinatra::Base
     email = params['email']
     mac_address = params['mac_address']
     product_sku = params['product_sku']
+    phone = params['phone'] # CORREÇÃO: Captura de telefone adicionada
+
+    # CORREÇÃO: Verifica a validade do SKU antes de prosseguir
     family = License.find_family_by_sku(product_sku)
+    unless family
+      halt 404, { error: "Produto com SKU '#{product_sku}' não encontrado.", status: "invalid_sku" }.to_json
+    end
 
     if License.trial_exists?(email: email, mac_address: mac_address, family: family)
       License.log_trial_denied(
@@ -118,18 +118,16 @@ class SmartManiaaApp < Sinatra::Base
         reason: "Trial já utilizado para este e-mail ou MAC na família #{family}"
       )
       puts "[TRIAL] Negado: Tentativa de novo trial para '#{email}' ou MAC '#{mac_address}' que já possui histórico."
-
-          #-- INÍCIO DO NOVO BLOCO DE CÓDIGO --
-       # Dispara o e-mail de trial negado
-       begin
-         License.send(:trigger_customer_email,
-           trigger_event: 'trial_denied',
-           family: family,
-           to_email: email
-         )
-       rescue => e
-         puts "[ALERTA] Falha ao enviar e-mail de trial negado: #{e.class} - #{e.message}"
-       end
+      
+      begin
+        License.send(:trigger_customer_email,
+          trigger_event: 'trial_denied',
+          family: family,
+          to_email: email
+        )
+      rescue => e
+        puts "[ALERTA] Falha ao enviar e-mail de trial negado: #{e.class} - #{e.message}"
+      end
       
       halt 403, { error: "Trial já existe para este email ou MAC.", status: "denied" }.to_json
     end
@@ -140,7 +138,8 @@ class SmartManiaaApp < Sinatra::Base
     _license_id, key, _was_new = License.provision_license(
       email: email, family: family, product_skus: family_skus, origin: 'trial',
       status: 'trial', trial_expires_at: expires_at, mac_address: mac_address,
-      grant_source: "trial_#{family}"
+      grant_source: "trial_#{family}",
+      phone: phone # CORREÇÃO: Passando o telefone
     )
     puts "[TRIAL] Sucesso: Trial iniciado para '#{email}' no MAC '#{mac_address}'."
     { license_key: key, status: "trial_started", expires_at: expires_at }.to_json
@@ -205,26 +204,19 @@ class SmartManiaaApp < Sinatra::Base
     { message: "Chave de licença para a Suite completa gerada com sucesso" }.to_json
   end
 
- # Arquivo: server.rb
-
-# Rota de teste do Stripe agora aceita POST e lê o corpo da requisição
-post '/test_stripe_webhook' do
-  content_type :json
-  payload = request.body.read
-  
-  # Adiciona um log para confirmar que o corpo foi recebido corretamente
-  puts "[DEBUG] Corpo da requisição recebido na rota de teste:"
-  puts payload
-
-  begin
-    # Passa o payload recebido diretamente para o handler
-    StripeHandler.handle_webhook(payload, "dummy_signature_for_test")
-    { status: 'ok', message: 'Simulação de webhook processada.' }.to_json
-  rescue => e
-    puts "‼️ ERRO INESPERADO na rota /test_stripe_webhook: #{e.class} - #{e.message}"
-    halt 500, { error: "Erro interno no servidor: #{e.message}" }.to_json
+  post '/test_stripe_webhook' do
+    content_type :json
+    payload = request.body.read
+    puts "[DEBUG] Corpo da requisição recebido na rota de teste:"
+    puts payload
+    begin
+      StripeHandler.handle_webhook(payload, "dummy_signature_for_test")
+      { status: 'ok', message: 'Simulação de webhook processada.' }.to_json
+    rescue => e
+      puts "‼️ ERRO INESPERADO na rota /test_stripe_webhook: #{e.class} - #{e.message}"
+      halt 500, { error: "Erro interno no servidor: #{e.message}" }.to_json
+    end
   end
-end
 
   # --- ROTAS DO PAINEL DE ADMIN ---
   get '/admin' do
@@ -304,74 +296,70 @@ end
   end
 
   # --- ROTAS DE GERENCIAMENTO DE LICENÇAS ---
- get '/admin/new' do
-   protected!
-   all_products = Product.all
-   # Cria uma lista única de famílias. Ex: ["smartgrid", "smartfield"]
-   @families = all_products.map { |p| p['family'] }.uniq.sort 
-
-   # Agrupa os produtos pela família para uso no JavaScript.
-   # O resultado será algo como: 
-   # { "smartgrid": [{sku: "sg_axis", name: "SmartGrid Axis"}, ...], "smartfield": [...] }
-   @products_by_family = all_products.group_by { |p| p['family'] }.to_json
-
-   erb :admin_new_license
- end
-
- # ... (outras rotas) ...
-
-post '/admin/create' do
-  protected!
-  email = params['email']
-  product_skus = params['product_skus']
-  origin = params['origin']
-  expires_at = params['expires_at']
-  expires_at = expires_at.empty? ? nil : Time.parse(expires_at)
-
-  if product_skus.nil? || product_skus.empty?
-    halt 400, "Erro: Você deve selecionar pelo menos um produto."
+  get '/admin/new' do
+    protected!
+    all_products = Product.all
+    @families = all_products.map { |p| p['family'] }.uniq.sort 
+    @products_by_family = all_products.group_by { |p| p['family'] }.to_json
+    erb :admin_new_license
   end
-  
-  # ====================================================================================
-  # INÍCIO DA NOVA VALIDAÇÃO DE FAMÍLIA
-  # ====================================================================================
-  # Se mais de um produto foi selecionado, verificamos se todos pertencem à mesma família.
-  if product_skus.length > 1
-    # CORREÇÃO: Formatamos o array Ruby para o formato de array literal do PostgreSQL.
-    # Ex: ["teste", "teste2"] se torna "{teste,teste2}"
-    formatted_skus = "{#{product_skus.join(',')}}"
+
+  post '/admin/create' do
+    protected!
+    email = params['email']
+    product_skus = params['product_skus']
+    origin = params['origin']
+    expires_at = params['expires_at']
+    expires_at = expires_at.empty? ? nil : Time.parse(expires_at)
     
-    # Esta query busca no banco de dados os nomes de família únicos para os SKUs fornecidos.
-    # Adicionamos '::varchar[]' para dizer ao PostgreSQL para tratar o parâmetro como um array de texto.
-    families = $db.exec_params("SELECT DISTINCT family FROM products WHERE sku = ANY($1::varchar[])", [formatted_skus])
-    
-    # Se a query retornar mais de uma família, retornamos um erro.
-    if families.num_tuples > 1
-      halt 400, "Erro: Todos os produtos selecionados devem pertencer à mesma família."
+    phone = nil
+    if params['phone_number'] && !params['phone_number'].strip.empty?
+      country_code = params['country_code']
+      if country_code.empty?
+        country_code = params['other_country_code'].strip
+      end
+      country_code = "+#{country_code.gsub(/\D/, '')}" unless country_code.start_with?('+')
+      cleaned_number = params['phone_number'].gsub(/\D/, '')
+      phone = "#{country_code}#{cleaned_number}"
     end
+
+    if product_skus.nil? || product_skus.empty?
+      halt 400, "Erro: Você deve selecionar pelo menos um produto."
+    end
+    
+    if product_skus.length > 1
+      formatted_skus = "{#{product_skus.join(',')}}"
+      families = $db.exec_params("SELECT DISTINCT family FROM products WHERE sku = ANY($1::varchar[])", [formatted_skus])
+      if families.num_tuples > 1
+        halt 400, "Erro: Todos os produtos selecionados devem pertencer à mesma família."
+      end
+    end
+    
+    family = License.find_family_by_sku(product_skus.first)
+    
+    License.provision_license(
+      email: email, family: family, product_skus: product_skus, origin: origin,
+      status: 'active', expires_at: expires_at, grant_source: "manual_admin_#{origin}",
+      phone: phone
+    )
+    puts "[ADMIN] Licença manual criada para '#{email}' com os SKUs: #{product_skus.join(', ')}."
+    redirect '/admin'
   end
-  # ====================================================================================
-  # FIM DA NOVA VALIDAÇÃO
-  # ====================================================================================
-  
-  # Se a validação passar, o código continua normalmente.
-  family = License.find_family_by_sku(product_skus.first)
-  
-  License.provision_license(
-    email: email, family: family, product_skus: product_skus, origin: origin,
-    status: 'active', expires_at: expires_at, grant_source: "manual_admin_#{origin}"
-  )
-  puts "[ADMIN] Licença manual criada para '#{email}' com os SKUs: #{product_skus.join(', ')}."
-  redirect '/admin'
-end
-
-# ... (outras rotas) ...
-
 
   get '/admin/license/:id' do
     protected!
     license_id = params['id']
     @license = $db.exec_params("SELECT * FROM licenses WHERE id = $1", [license_id]).first
+    
+    @stripe_customer = nil
+    if @license && @license['stripe_customer_id']
+      customer_result = $db.exec_params(
+        "SELECT name, locale FROM stripe_customers WHERE stripe_customer_id = $1", 
+        [@license['stripe_customer_id']]
+      )
+      @stripe_customer = customer_result.first if customer_result.num_tuples > 0
+    end
+
     @entitlements = $db.exec_params(
       "SELECT le.*, p.name AS product_name 
        FROM license_entitlements le JOIN products p ON le.product_sku = p.sku
@@ -401,6 +389,27 @@ end
     puts "[ADMIN] Licença ID #{params['id']} e todos os seus dados associados foram deletados."
     redirect '/admin'
   end
+  
+  post '/admin/license/:id/phone' do
+    protected!
+    license_id = params['id']
+  
+    full_phone = nil
+    if params['phone_number'] && !params['phone_number'].strip.empty?
+      country_code = params['country_code']
+      if country_code.empty?
+        country_code = params['other_country_code'].strip
+      end
+      country_code = "+#{country_code.gsub(/\D/, '')}" unless country_code.start_with?('+')
+      cleaned_number = params['phone_number'].gsub(/\D/, '')
+      full_phone = "#{country_code}#{cleaned_number}"
+    end
+
+    $db.exec_params("UPDATE licenses SET phone = $1 WHERE id = $2", [full_phone, license_id])
+    puts "[ADMIN] Telefone da Licença ID #{license_id} foi atualizado."
+    
+    redirect "/admin/license/#{license_id}"
+  end
 
   post '/admin/entitlement/:id/delete' do
     protected!
@@ -426,112 +435,98 @@ end
   end
 
   # --- ROTAS DO CENTRO DE CONTROLE DA FAMÍLIA ---
-
-# Rota principal que lista todas as famílias
-get '/admin/families' do
-  protected!
-  # Sincroniza famílias da tabela de produtos para a tabela de info, se faltar alguma
-  $db.exec(%q{
-    INSERT INTO product_family_info (family_name, homepage_url, display_name)
-    SELECT DISTINCT family, '', INITCAP(family) FROM products
-    WHERE family NOT IN (SELECT family_name FROM product_family_info)
-  })
-  
-  @families = $db.exec("SELECT * FROM product_family_info ORDER BY family_name")
-  erb :admin_families
-end
-
-# Rota para exibir a página de configurações de UMA família específica
-get '/admin/family/:name' do
-  protected!
-  @family_name = params['name']
-  
-  # Busca todas as informações da família
-  @family_info = $db.exec_params("SELECT * FROM product_family_info WHERE family_name = $1", [@family_name]).first
-  halt 404, "Família não encontrada" unless @family_info
-
-  # Busca os mesmos dados que a antiga página de e-mails, mas filtrados por esta família
-  @notifiers = $db.exec_params("SELECT * FROM admin_notifiers WHERE family_name = $1 ORDER BY email", [@family_name])
-  @templates = $db.exec("SELECT * FROM email_templates ORDER BY name")
-  @rules = {}
-  $db.exec_params("SELECT * FROM email_rules WHERE family_name = $1", [@family_name]).each do |rule|
-    @rules[rule['email_template_id']] = rule['is_active'] == 't'
-  end
-
-  erb :admin_family_settings
-end
-
-# Rota para SALVAR as configurações da família
-post '/admin/family/:name' do
-  protected!
-  family_name = params['name']
-
-  # 1. Salva as informações gerais da família
-  $db.exec_params(
-    "UPDATE product_family_info SET display_name = $1, homepage_url = $2, support_email = $3, logo_url = $4, sender_name = $5 WHERE family_name = $6",
-    [params['display_name'], params['homepage_url'], params['support_email'], params['logo_url'], params['sender_name'], family_name]
-  )
-
-  # 2. Adiciona novo notificador de admin, se fornecido
-  if params['new_notifier_email'] && !params['new_notifier_email'].empty?
-    $db.exec_params(
-      "INSERT INTO admin_notifiers (email, family_name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-      [params['new_notifier_email'], family_name]
-    )
-  end
-
-  # 3. Processa a remoção de notificadores
-  (params['remove_notifiers'] || []).each do |email_to_remove|
-    $db.exec_params("DELETE FROM admin_notifiers WHERE email = $1 AND family_name = $2", [email_to_remove, family_name])
-  end
-
-  # 4. Processa as regras de ativação de e-mails
-  template_ids = $db.exec("SELECT id FROM email_templates").map { |row| row['id'] }
-  template_ids.each do |template_id|
-    is_active_from_form = params['rules'] && params['rules'][template_id] == 'on'
+  get '/admin/families' do
+    protected!
+    $db.exec(%q{
+      INSERT INTO product_family_info (family_name, homepage_url, display_name)
+      SELECT DISTINCT family, '', INITCAP(family) FROM products
+      WHERE family NOT IN (SELECT family_name FROM product_family_info)
+    })
     
-    existing_rule = $db.exec_params("SELECT id FROM email_rules WHERE family_name = $1 AND email_template_id = $2", [family_name, template_id]).first
-
-    if existing_rule
-      $db.exec_params("UPDATE email_rules SET is_active = $1 WHERE id = $2", [is_active_from_form, existing_rule['id']])
-    elsif is_active_from_form
-      $db.exec_params("INSERT INTO email_rules (family_name, email_template_id, is_active) VALUES ($1, $2, true)", [family_name, template_id])
-    end
+    @families = $db.exec("SELECT * FROM product_family_info ORDER BY family_name")
+    erb :admin_families
   end
 
-  redirect "/admin/family/#{family_name}"
-end
+  get '/admin/family/:name' do
+    protected!
+    @family_name = params['name']
+    
+    @family_info = $db.exec_params("SELECT * FROM product_family_info WHERE family_name = $1", [@family_name]).first
+    halt 404, "Família não encontrada" unless @family_info
 
-# Mantenha as rotas de gerenciamento de TEMPLATES aqui, pois são globais
-get '/admin/email_templates/new' do
-  protected!
-  erb :admin_email_template_new
-end
+    @notifiers = $db.exec_params("SELECT * FROM admin_notifiers WHERE family_name = $1 ORDER BY email", [@family_name])
+    @templates = $db.exec("SELECT * FROM email_templates ORDER BY name")
+    @rules = {}
+    $db.exec_params("SELECT * FROM email_rules WHERE family_name = $1", [@family_name]).each do |rule|
+      @rules[rule['email_template_id']] = rule['is_active'] == 't'
+    end
 
-post '/admin/email_templates' do
-  protected!
-  $db.exec_params("INSERT INTO email_templates (name, trigger_event, subject, body) VALUES ($1, $2, $3, $4)", [params['name'], params['trigger_event'], params['subject'], params['body']])
-  puts "[ADMIN] Novo template de e-mail '#{params['name']}' foi criado."
-  redirect '/admin/families' # Redireciona para a nova página principal
-end
+    erb :admin_family_settings
+  end
 
-get '/admin/email_templates/:id/edit' do
-  protected!
-  @template = $db.exec_params("SELECT * FROM email_templates WHERE id = $1", [params['id']]).first
-  erb :admin_email_template_edit
-end
+  post '/admin/family/:name' do
+    protected!
+    family_name = params['name']
 
-post '/admin/email_templates/:id' do
-  protected!
-  $db.exec_params(
-    "UPDATE email_templates SET subject = $1, body = $2, trigger_event = $3, updated_at = NOW() WHERE id = $4",
-    [params['subject'], params['body'], params['trigger_event'], params['id']]
-  )
-  puts "[ADMIN] Template de e-mail ID #{params['id']} foi atualizado."
-  redirect '/admin/families' # Redireciona para a nova página principal
-end
+    $db.exec_params(
+      "UPDATE product_family_info SET display_name = $1, homepage_url = $2, support_email = $3, logo_url = $4, sender_name = $5 WHERE family_name = $6",
+      [params['display_name'], params['homepage_url'], params['support_email'], params['logo_url'], params['sender_name'], family_name]
+    )
 
-  
+    if params['new_notifier_email'] && !params['new_notifier_email'].empty?
+      $db.exec_params(
+        "INSERT INTO admin_notifiers (email, family_name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        [params['new_notifier_email'], family_name]
+      )
+    end
+
+    (params['remove_notifiers'] || []).each do |email_to_remove|
+      $db.exec_params("DELETE FROM admin_notifiers WHERE email = $1 AND family_name = $2", [email_to_remove, family_name])
+    end
+
+    template_ids = $db.exec("SELECT id FROM email_templates").map { |row| row['id'] }
+    template_ids.each do |template_id|
+      is_active_from_form = params['rules'] && params['rules'][template_id] == 'on'
+      
+      existing_rule = $db.exec_params("SELECT id FROM email_rules WHERE family_name = $1 AND email_template_id = $2", [family_name, template_id]).first
+
+      if existing_rule
+        $db.exec_params("UPDATE email_rules SET is_active = $1 WHERE id = $2", [is_active_from_form, existing_rule['id']])
+      elsif is_active_from_form
+        $db.exec_params("INSERT INTO email_rules (family_name, email_template_id, is_active) VALUES ($1, $2, true)", [family_name, template_id])
+      end
+    end
+
+    redirect "/admin/family/#{family_name}"
+  end
+
+  get '/admin/email_templates/new' do
+    protected!
+    erb :admin_email_template_new
+  end
+
+  post '/admin/email_templates' do
+    protected!
+    $db.exec_params("INSERT INTO email_templates (name, trigger_event, subject, body) VALUES ($1, $2, $3, $4)", [params['name'], params['trigger_event'], params['subject'], params['body']])
+    puts "[ADMIN] Novo template de e-mail '#{params['name']}' foi criado."
+    redirect '/admin/families'
+  end
+
+  get '/admin/email_templates/:id/edit' do
+    protected!
+    @template = $db.exec_params("SELECT * FROM email_templates WHERE id = $1", [params['id']]).first
+    erb :admin_email_template_edit
+  end
+
+  post '/admin/email_templates/:id' do
+    protected!
+    $db.exec_params(
+      "UPDATE email_templates SET subject = $1, body = $2, trigger_event = $3, updated_at = NOW() WHERE id = $4",
+      [params['subject'], params['body'], params['trigger_event'], params['id']]
+    )
+    puts "[ADMIN] Template de e-mail ID #{params['id']} foi atualizado."
+    redirect '/admin/families'
+  end
 
   get '/admin/licenses/export.csv' do
     protected!
@@ -549,49 +544,55 @@ end
     end
   end
 
-  # --- ROTAS PÚBLICAS ---
-# ... (rota get '/') ...
-# ... (rota post '/webhook/stripe') ...
+  # ROTA SEGURA PARA RECEBER EVENTOS DA SENDGRID (LÓGICA COMPLETA)
+  post '/webhook/sendgrid_events' do
+    unless ENV['SENDGRID_WEBHOOK_KEY']
+      puts "‼️ ERRO CRÍTICO: Variável de ambiente SENDGRID_WEBHOOK_KEY faltando!"
+      halt 500, "Configuração de webhook ausente"
+    end
 
-# ROTA SEGURA PARA RECEBER EVENTOS DA SENDGRID
-post '/webhook/sendgrid_events' do
-  # Garante que a chave de verificação está configurada no ambiente.
-  unless ENV['SENDGRID_WEBHOOK_KEY']
-    puts "‼️ ERRO CRÍTICO: Variável de ambiente SENDGRID_WEBHOOK_KEY faltando!"
-    halt 500, "Configuração de webhook ausente"
+    request_body = request.body.read
+    signature = request.env['HTTP_X_TWILIO_EMAIL_EVENT_WEBHOOK_SIGNATURE']
+    timestamp = request.env['HTTP_X_TWILIO_EMAIL_EVENT_WEBHOOK_TIMESTAMP']
+    
+    begin
+      processor = SendGrid::EventWebhook::Processor.new
+      processor.process(public_key: ENV['SENDGRID_WEBHOOK_KEY'], payload: request_body, signature: signature, timestamp: timestamp)
+      puts "[SENDGRID WEBHOOK] Assinatura verificada com sucesso."
+    rescue SendGrid::EventWebhook::SignatureVerificationError => e
+      puts "⚠️ ERRO DE SEGURANÇA: Falha na verificação da assinatura do webhook da SendGrid: #{e.message}"
+      halt 403, "Signature verification failed"
+    end
+    
+    begin
+      events = JSON.parse(request_body)
+    rescue JSON::ParserError
+      halt 400, "Invalid JSON payload"
+    end
+
+    events.each do |event|
+      event_type = event['event']
+      email = event['email']
+
+      case event_type
+      when 'bounce', 'dropped'
+        reason = event['reason'] || 'Motivo não especificado'
+        puts "[SENDGRID] Entrega FALHOU para '#{email}' (Evento: #{event_type}). Motivo: #{reason}"
+        $db.exec_params("UPDATE licenses SET email_status = 'bounced' WHERE lower(email) = lower($1)", [email])
+      when 'spamreport'
+        puts "[SENDGRID] ALERTA DE SPAM para '#{email}'. O usuário marcou o e-mail como spam."
+        $db.exec_params("UPDATE licenses SET email_status = 'spam_report' WHERE lower(email) = lower($1)", [email])
+      when 'delivered'
+        puts "[SENDGRID] E-mail para '#{email}' entregue com sucesso."
+        $db.exec_params("UPDATE licenses SET email_status = 'ok' WHERE lower(email) = lower($1) AND email_status != 'ok'", [email])
+      else
+        puts "[SENDGRID] Evento não tratado recebido: #{event_type} para o e-mail #{email}"
+      end
+    end
+
+    status 200
+    body 'Events received'
   end
-
-  # --- INÍCIO DO BLOCO DE VERIFICAÇÃO DE ASSINATURA ---
-  request_body = request.body.read
-  signature = request.env['HTTP_X_TWILIO_EMAIL_EVENT_WEBHOOK_SIGNATURE']
-  timestamp = request.env['HTTP_X_TWILIO_EMAIL_EVENT_WEBHOOK_TIMESTAMP']
-  
-  begin
-    # Usa a biblioteca da SendGrid para verificar a assinatura.
-    # Se a assinatura for inválida, ela levantará uma exceção.
-    processor = SendGrid::EventWebhook::Processor.new
-    processor.process(public_key: ENV['SENDGRID_WEBHOOK_KEY'], payload: request_body, signature: signature, timestamp: timestamp)
-    puts "[SENDGRID WEBHOOK] Assinatura verificada com sucesso."
-  rescue SendGrid::EventWebhook::SignatureVerificationError => e
-    puts "⚠️ ERRO DE SEGURANÇA: Falha na verificação da assinatura do webhook da SendGrid: #{e.message}"
-    halt 403, "Signature verification failed"
-  end
-  # --- FIM DO BLOCO DE VERIFICAÇÃO ---
-
-  # Se a verificação passou, o resto do código executa normalmente.
-  begin
-    events = JSON.parse(request_body)
-  rescue JSON::ParserError
-    halt 400, "Invalid JSON payload"
-  end
-
-  events.each do |event|
-    # ... (toda a sua lógica 'case event_type' para 'bounce', 'dropped', etc., continua aqui sem alterações) ...
-  end
-
-  status 200
-  body 'Event received'
-end
 
   # --- Bloco final de inicialização ---
   port = ENV.fetch('PORT', 9292)

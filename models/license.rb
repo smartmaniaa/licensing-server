@@ -29,12 +29,17 @@ class License
   end
 
   #-- Orquestrador principal: provisiona novos direitos de uso e dispara e-mails (VERSÃO FINAL COMPLETA)
-  def self.provision_license(email:, family:, product_skus:, origin:, grant_source:, trial_expires_at: nil, expires_at: nil, status: 'active', platform_subscription_id: nil, mac_address: nil, locale: nil, stripe_customer_id: nil)
+  def self.provision_license(email:, family:, product_skus:, origin:, grant_source:, trial_expires_at: nil, expires_at: nil, status: 'active', platform_subscription_id: nil, mac_address: nil, locale: nil, stripe_customer_id: nil, phone: nil)
     conn = $db
     license_id, key, was_new_license = find_or_create_by_email_and_family(email, family)
 
     if stripe_customer_id
       conn.exec_params("UPDATE licenses SET stripe_customer_id = $1 WHERE id = $2", [stripe_customer_id, license_id])
+    end
+    
+    # --- NOVO BLOCO PARA SALVAR O TELEFONE ---
+    if phone && !phone.empty?
+      conn.exec_params("UPDATE licenses SET phone = $1 WHERE id = $2", [phone, license_id])
     end
     
     if was_new_license

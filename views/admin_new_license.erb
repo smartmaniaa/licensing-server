@@ -4,41 +4,35 @@
   <meta charset="UTF-8">
   <title>Criar Nova Licença - SmartManiaa</title>
    <style>
-    /*-- Estilos (sem alterações, mantidos para consistência) --*/
+    /* Estilos completos e consistentes */
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 2em; background-color: #f4f6f8; color: #333; }
     .container { max-width: 800px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
     h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
     .form-group { margin-bottom: 1.5em; }
     label { display: block; margin-bottom: 0.5em; font-weight: bold; }
-    input[type="email"], input[type="date"], select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+    input[type="email"], input[type="tel"], input[type="date"], input[type="text"], select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
     .checkbox-group { display: flex; flex-wrap: wrap; gap: 10px 24px; }
     button { background-color: #28a745; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; }
     .back-link { display: inline-block; margin-bottom: 2em; color: #3498db; text-decoration: none; }
+    .phone-input-group { display: flex; gap: 10px; }
+    .phone-input-group select { width: 150px; }
+    .phone-input-group input[type="tel"] { flex-grow: 1; }
+    #other_country_code_wrapper { margin-top: 8px; }
   </style>
 
   <script>
-    // Executa o nosso código apenas quando o HTML da página estiver totalmente carregado.
     document.addEventListener('DOMContentLoaded', function() {
-      
-      // Converte o JSON de produtos agrupados, enviado pelo backend, para um objeto JavaScript.
-      // A tag <%= %> injeta a string JSON diretamente aqui.
+      // Script para popular produtos por família
       const productsByFamily = JSON.parse('<%= @products_by_family %>');
-
       const familySelector = document.getElementById('family_selector');
       const productsContainer = document.getElementById('products_container');
 
-      // Adiciona um "ouvinte" que dispara a função sempre que o valor do seletor mudar.
       familySelector.addEventListener('change', function() {
         const selectedFamily = this.value;
-
-        // 1. Limpa a lista de produtos anterior.
         productsContainer.innerHTML = '';
-
-        // 2. Se uma família válida foi selecionada, popula com os novos produtos.
         if (selectedFamily && productsByFamily[selectedFamily]) {
           productsByFamily[selectedFamily].forEach(product => {
             const div = document.createElement('div');
-            // Cria o HTML do checkbox e da label para cada produto.
             div.innerHTML = `
               <input type="checkbox" name="product_skus[]" value="${product.sku}" id="product_${product.sku}">
               <label for="product_${product.sku}">${product.name}</label>
@@ -46,8 +40,22 @@
             productsContainer.appendChild(div);
           });
         } else {
-          // Se nenhuma família for selecionada, mostra a mensagem inicial.
           productsContainer.innerHTML = '<p><i>Selecione uma família acima para ver os produtos.</i></p>';
+        }
+      });
+      
+      // Script para o campo de telefone
+      const countrySelector = document.getElementById('country_code_selector');
+      const otherCodeWrapper = document.getElementById('other_country_code_wrapper');
+      
+      // Garante que o campo manual comece escondido
+      otherCodeWrapper.style.display = 'none';
+
+      countrySelector.addEventListener('change', function() {
+        if (this.value === "") { // Se a opção "Outro" for selecionada
+          otherCodeWrapper.style.display = 'block'; // Mostra o campo de texto
+        } else {
+          otherCodeWrapper.style.display = 'none'; // Esconde o campo de texto
         }
       });
     });
@@ -62,6 +70,25 @@
       <div class="form-group">
         <label for="email">Email do Cliente</label>
         <input type="email" id="email" name="email" required autocomplete="off">
+      </div>
+
+      <div class="form-group">
+        <label for="phone_number">Telefone do Cliente (Opcional)</label>
+        <div class="phone-input-group">
+          <select name="country_code" id="country_code_selector">
+            <option value="+55" selected>Brasil (+55)</option>
+            <option value="+1">EUA (+1)</option>
+            <option value="+351">Portugal (+351)</option>
+            <option value="+44">Reino Unido (+44)</option>
+            <option value="">Outro...</option>
+          </select>
+          <input type="tel" id="phone_number" name="phone_number" placeholder="15999998888">
+        </div>
+        
+        <div id="other_country_code_wrapper">
+          <label for="other_country_code" style="font-weight: normal; font-size: 0.9em; margin-top: 5px;">Digite o código do país (ex: +49 para Alemanha)</label>
+          <input type="text" name="other_country_code" id="other_country_code" placeholder="+XX">
+        </div>
       </div>
 
       <div class="form-group">
