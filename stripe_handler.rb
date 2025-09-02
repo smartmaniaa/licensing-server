@@ -66,7 +66,65 @@ module StripeHandler
       puts "[STRIPE] Cliente '#{email}' (ID: #{customer_id}) salvo/atualizado no banco local."
       return [200, {}, ['Cliente processado com sucesso']]
 
+    # ---- BLOCO FINAL E CORRIGIDO (customer.subscription.created) ----
+
     when 'customer.subscription.created'
+      subscription_data = event['data']['object']
+      subscription_id = subscription_data['id']
+      customer_id = subscription_data['customer']
+
+      existing_entitlement = $db.exec_params("SELECT 1 FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id])
+      if existing_entitlement.num_tuples > 0
+        puts "[STRIPE] Ignorando 'customer.subscription.created' pois já foi processada."
+        return [200, {}, ['Assinatura já processada']]
+      end
+      
+      begin
+        # Lógica de buscar cliente e telefone (está correta)
+        customer_info = $db.exec_params("SELECT email, locale, phone FROM stripe_customers WHERE stripe_customer_id = $1 LIMIT 1", [customer_id]).first
+        customer_email, customer_locale, customer_phone = nil, nil, nil
+
+        unless customer_info
+          puts "‼️ AVISO: Cliente #{customer_id} não encontrado no banco local. Fazendo fallback para a API."
+          customer_details = Stripe::Customer.retrieve(customer_id)
+          customer_email, customer_locale, customer_phone = customer_details.email, customer_details.preferred_locales&.first, customer_details.phone
+        else
+          puts "[STRIPE] Informações do cliente obtidas do banco local."
+          customer_email, customer_locale, customer_phone = customer_info.values_at('email', 'locale', 'phone')
+        end
+
+        # Lógica de SKU e Família (está correta)
+        product_skus = subscription_data['items']['data'].flat_map { |item| stripe_price_to_sku_mapping[item['price']['id']] }.compact.uniq
+        if product_skus.empty?
+          return [400, {}, ['Nenhum SKU válido encontrado']]
+        end
+        family = License.find_family_by_sku(product_skus.first)
+
+        # --- CORREÇÃO FINAL APLICADA AQUI ---
+        # Restaurando a lógica de data da sua versão 5.1 funcional.
+        status = 'active'
+        expires_at = if subscription_data['status'] == 'trialing'
+                       Time.at(subscription_data['trial_end'])
+                     else
+                       Time.at(subscription_data['items']['data'][0]['current_period_end'])
+                     end
+        
+        # O resto do código para criar a licença (está correto)
+        License.provision_license(
+          email: customer_email, family: family, product_skus: product_skus, origin: 'stripe',
+          grant_source: "stripe_sub:#{subscription_id}", status: status, expires_at: expires_at,
+          trial_expires_at: nil,
+          platform_subscription_id: subscription_id,
+          locale: customer_locale,
+          stripe_customer_id: customer_id,
+          phone: customer_phone
+        )
+        puts "[STRIPE] Sucesso: Direito de uso provisionado para '#{customer_email}' via Assinatura #{subscription_id}."
+      rescue => e
+        puts "‼️ ERRO inesperado ao processar customer.subscription.created: #{e.class} - #{e.message}\n#{e.backtrace.join("\n")}"
+        return [500, {}, ['Erro interno ao provisionar direito de uso']]
+      end
+      return [200, {}, ['Direito de uso provisionado com sucesso']]
       subscription_data = event['data']['object']
       subscription_id = subscription_data['id']
       customer_id = subscription_data['customer']
