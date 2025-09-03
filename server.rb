@@ -78,6 +78,21 @@ class SmartManiaaApp < Sinatra::Base
     end
   end
 
+  def build_phone_from_params(params)
+      return nil unless params['phone_number'] && !params['phone_number'].strip.empty?
+
+      country_code = params['country_code']
+      if country_code.empty?
+        country_code = params['other_country_code']&.strip
+      end
+      
+      return nil unless country_code && !country_code.empty?
+
+      country_code = "+#{country_code.gsub(/\D/, '')}" unless country_code.start_with?('+')
+      cleaned_number = params['phone_number'].gsub(/\D/, '')
+      "#{country_code}#{cleaned_number}"
+    end
+
   # --- ROTAS PÚBLICAS ---
   get '/' do
     content_type :json
@@ -312,16 +327,8 @@ class SmartManiaaApp < Sinatra::Base
     expires_at = params['expires_at']
     expires_at = expires_at.empty? ? nil : Time.parse(expires_at)
     
-    phone = nil
-    if params['phone_number'] && !params['phone_number'].strip.empty?
-      country_code = params['country_code']
-      if country_code.empty?
-        country_code = params['other_country_code'].strip
-      end
-      country_code = "+#{country_code.gsub(/\D/, '')}" unless country_code.start_with?('+')
-      cleaned_number = params['phone_number'].gsub(/\D/, '')
-      phone = "#{country_code}#{cleaned_number}"
-    end
+    full_phone = build_phone_from_params(params)
+    $db.exec_params("UPDATE licenses SET phone = $1 WHERE id = $2", [full_phone, license_id])
 
     if product_skus.nil? || product_skus.empty?
       halt 400, "Erro: Você deve selecionar pelo menos um produto."

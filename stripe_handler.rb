@@ -198,7 +198,28 @@ module StripeHandler
       return [200, {}, ['Renovação processada']]
       
     when 'customer.subscription.deleted'
+    # Em stripe_handler.rb
     when 'customer.subscription.updated'
+      subscription_data = event['data']['object']
+      subscription_id = subscription_data['id']
+      
+      # Verificamos se o cliente agendou o cancelamento
+      if subscription_data['cancel_at_period_end'] == true
+        puts "[STRIPE] Ação: Cancelamento agendado detectado para a assinatura #{subscription_id}."
+        License.update_entitlement_status_from_stripe(subscription_id: subscription_id, status: 'pending_cancellation')
+      
+      # Verificamos se o cliente reativou uma assinatura que ia ser cancelada
+      elsif subscription_data['cancel_at_period_end'] == false
+        puts "[STRIPE] Ação: Reativação de assinatura detectada para #{subscription_id}."
+        # Aqui, atualizamos de 'pending_cancellation' de volta para 'active'
+        $db.exec_params(
+          "UPDATE license_entitlements SET status = 'active' WHERE platform_subscription_id = $1 AND status = 'pending_cancellation'",
+          [subscription_id]
+        )
+      else
+        puts "[STRIPE] Info: Assinatura #{subscription_id} foi atualizada (sem alteração no status de cancelamento)."
+      end
+      return [200, {}, ['Atualização de assinatura processada']]
       subscription_data = event['data']['object']
       
       # Verificamos se o motivo da atualização foi um agendamento de cancelamento
