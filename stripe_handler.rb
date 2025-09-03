@@ -198,6 +198,20 @@ module StripeHandler
       return [200, {}, ['Renovação processada']]
       
     when 'customer.subscription.deleted'
+    when 'customer.subscription.updated'
+      subscription_data = event['data']['object']
+      
+      # Verificamos se o motivo da atualização foi um agendamento de cancelamento
+      if subscription_data['cancel_at_period_end'] == true
+        puts "[STRIPE] Ação: Cancelamento agendado detectado para a assinatura #{subscription_data['id']}."
+        License.update_entitlement_status_from_stripe(
+          subscription_id: subscription_data['id'], 
+          status: 'pending_cancellation'
+        )
+      else
+        puts "[STRIPE] Info: Assinatura #{subscription_data['id']} foi atualizada (sem agendamento de cancelamento)."
+      end
+      return [200, {}, ['Atualização de assinatura processada']]
       subscription = event['data']['object']
       License.update_entitlement_status_from_stripe(subscription_id: subscription['id'], status: 'revoked')
       puts "[STRIPE] Ação: Assinatura #{subscription['id']} cancelada."
