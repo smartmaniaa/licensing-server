@@ -8,11 +8,10 @@ gem "sinatra", "~> 4.0"
 gem "pg", "~> 1.2"
 
 # API da SendGrid - A correção principal está aqui
-# Especifica uma versão moderna que é compatível com nosso código de webhook
 gem "sendgrid-ruby", "~> 6.5"
 
 # API do Stripe
-gem "stripe", "~> 7.0" # Também atualizado para uma versão mais moderna
+gem "stripe", "~> 7.0"
 
 # Servidor de produção
 gem "puma", "~> 6.4"
