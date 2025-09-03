@@ -93,6 +93,14 @@ class SmartManiaaApp < Sinatra::Base
       "#{country_code}#{cleaned_number}"
     end
 
+    def log_event(level:, source:, message:, details: nil)
+      details_json = details ? PG::Connection.escape_string(details.to_json) : nil
+      $db.exec_params(
+        "INSERT INTO system_events (level, source, message, details) VALUES ($1, $2, $3, $4)",
+        [level.to_s.upcase, source, message, details_json]
+      )
+    end
+
   # --- ROTAS PÚBLICAS ---
   get '/' do
     content_type :json

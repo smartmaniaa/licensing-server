@@ -198,6 +198,36 @@ module StripeHandler
       return [200, {}, ['Renovação processada']]
       
     when 'customer.subscription.deleted'
+      subscription = event['data']['object']
+      subscription_id = subscription['id']
+      
+      # Executa a atualização no banco de dados
+      result = License.update_entitlement_status_from_stripe(
+        subscription_id: subscription_id, 
+        status: 'revoked'
+      )
+      
+      # Verifica se alguma linha foi de fato atualizada no banco
+      if result.cmd_tuples.zero?
+        # Se 0 linhas foram atualizadas, a assinatura não existia no nosso sistema
+        puts "[STRIPE] Aviso: Recebido cancelamento para assinatura #{subscription_id}, mas ela não foi encontrada no banco de dados."
+        log_event(
+          level: 'warning',
+          source: 'stripe_webhook',
+          message: "Recebido evento de cancelamento para assinatura não encontrada no BD: #{subscription_id}"
+        )
+      else
+        # Se 1 ou mais linhas foram atualizadas, o cancelamento foi bem-sucedido
+        puts "[STRIPE] Ação: Assinatura #{subscription_id} cancelada."
+        log_event(
+          level: 'info',
+          source: 'stripe_webhook',
+          message: "Assinatura cancelada com sucesso no BD: #{subscription_id}"
+        )
+      end
+      
+      # Responde ao Stripe que o evento foi recebido e processado com sucesso
+      return [200, {}, ['Cancelamento processado']]
     # Em stripe_handler.rb
     when 'customer.subscription.updated'
       subscription_data = event['data']['object']

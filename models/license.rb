@@ -127,6 +127,7 @@ class License
   end
 
   def self.update_entitlement_status_from_stripe(subscription_id:, status:)
+    # A query já retorna o objeto de resultado, então nenhuma mudança é necessária aqui.
     $db.exec_params("UPDATE license_entitlements SET status = $1 WHERE platform_subscription_id = $2", [status, subscription_id])
   end
   
