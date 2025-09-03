@@ -5,6 +5,7 @@ require 'pg'
 require 'json'
 require 'csv'
 require 'dotenv/load'
+require 'sendgrid-ruby/event_webhook' # <-- ADICIONE ESTA LINHA
 require_relative 'models/license.rb'
 require_relative 'models/product.rb'
 require_relative 'mailer.rb'
