@@ -5,7 +5,18 @@ require 'pg'
 require 'json'
 require 'csv'
 require 'dotenv/load'
-require 'sendgrid-ruby/event_webhook'
+# --- INÍCIO DA SOLUÇÃO ---
+# Este bloco torna o servidor resiliente, permitindo que ele inicie
+# mesmo se a gem 'sendgrid-ruby' não for a versão mais nova.
+begin
+  # Tenta carregar o arquivo para versões modernas da gem
+  require 'sendgrid-ruby/event_webhook'
+rescue LoadError
+  # Se o arquivo não for encontrado (indicando uma gem antiga),
+  # ele captura o erro, avisa no log e continua a execução.
+  puts "[INFO] Módulo 'sendgrid-ruby/event_webhook' não encontrado, pulando. A verificação do webhook da SendGrid pode falhar."
+end
+# --- FIM DA SOLUÇÃO ---
 require_relative 'models/license.rb'
 require_relative 'models/product.rb'
 require_relative 'mailer.rb'
