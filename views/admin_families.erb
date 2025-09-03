@@ -8,21 +8,32 @@
     .container { max-width: 900px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
     h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
     .back-link { display: inline-block; margin-bottom: 2em; color: #3498db; text-decoration: none; }
-    .family-list a { display: block; background-color: #f9f9f9; padding: 15px; margin-bottom: 10px; border-radius: 5px; text-decoration: none; color: #2c3e50; font-weight: 500; font-size: 1.1em; transition: background-color 0.2s; }
-    .family-list a:hover { background-color: #e8f4fd; }
+    
+    /* --- ESTILOS ADICIONADOS/MODIFICADOS --- */
+    .family-list .family-item { display: flex; justify-content: space-between; align-items: center; background-color: #f9f9f9; margin-bottom: 10px; border-radius: 5px; transition: background-color 0.2s; }
+    .family-list .family-item:hover { background-color: #e8f4fd; }
+    .family-list .family-item a { flex-grow: 1; text-decoration: none; color: #2c3e50; font-weight: 500; font-size: 1.1em; padding: 15px; }
+    .btn-delete { background-color: #e74c3c; color: white; border: none; padding: 8px 12px; border-radius: 0 4px 4px 0; cursor: pointer; font-size: 14px; height: 100%; }
+    .btn-delete:hover { opacity: 0.9; }
+    .family-list form { margin: 0; }
   </style>
 </head>
 <body>
   <div class="container">
     <a href="/admin" class="back-link">&larr; Voltar ao Painel Principal</a>
     <h1>Centro de Controle da Família</h1>
-    <p>Selecione uma família de produtos abaixo para gerenciar suas configurações de e-mail, URLs e outras variáveis personalizadas.</p>
+    <p>Selecione uma família de produtos abaixo para gerenciar suas configurações ou para excluí-la permanentemente.</p>
 
     <div class="family-list">
       <% @families.each do |family| %>
-        <a href="/admin/family/<%= family['family_name'] %>">
-          <%= family['display_name'] || family['family_name'].capitalize %>
-        </a>
+        <div class="family-item">
+          <a href="/admin/family/<%= family['family_name'] %>">
+            <%= family['display_name'] || family['family_name'].capitalize %>
+          </a>
+          <form action="/admin/family/<%= family['family_name'] %>/delete" method="post" onsubmit="return confirm('ATENÇÃO:\n\nIsso apagará permanentemente a família, todos os seus produtos, chaves de licença e direitos de uso associados.\n\nEsta ação NÃO PODE SER DESFEITA.\n\nDeseja continuar?');">
+            <button type="submit" class="btn-delete">Excluir</button>
+          </form>
+        </div>
       <% end %>
     </div>
   </div>

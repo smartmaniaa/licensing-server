@@ -318,6 +318,70 @@ class SmartManiaaApp < Sinatra::Base
     redirect '/admin/products'
   end
 
+  # Adicione este bloco de código junto com as outras rotas de admin
+
+  post '/admin/family/:name/delete' do
+    protected!
+    family_name = params['name']
+
+    puts "[ADMIN] Iniciando exclusão completa da família: #{family_name}"
+
+    # Usamos uma transação para garantir que tudo seja executado com sucesso, ou nada é alterado.
+    $db.transaction do |conn|
+      # Encontra todos os SKUs de produtos da família
+      product_skus_res = conn.exec_params("SELECT sku FROM products WHERE family = $1", [family_name])
+      product_skus = product_skus_res.map { |row| row['sku'] }
+
+      if product_skus.any?
+        # Encontra todos os IDs de licença (chaves) da família
+        license_ids_res = conn.exec_params("SELECT id FROM licenses WHERE family = $1", [family_name])
+        license_ids = license_ids_res.map { |row| row['id'] }
+
+        if license_ids.any?
+          license_ids_sql_list = license_ids.join(',')
+
+          # Encontra todos os IDs de entitlements
+          entitlement_ids_res = conn.exec("SELECT id FROM license_entitlements WHERE license_id IN (#{license_ids_sql_list})")
+          entitlement_ids = entitlement_ids_res.map { |row| row['id'] }
+
+          if entitlement_ids.any?
+            entitlement_ids_sql_list = entitlement_ids.join(',')
+            # 1. Apaga os grants dos entitlements
+            conn.exec("DELETE FROM entitlement_grants WHERE license_entitlement_id IN (#{entitlement_ids_sql_list})")
+          end
+
+          # 2. Apaga os entitlements
+          conn.exec("DELETE FROM license_entitlements WHERE license_id IN (#{license_ids_sql_list})")
+        end
+
+        product_skus_sql_list = product_skus.map { |sku| "'#{conn.escape_string(sku)}'" }.join(',')
+        
+        # 3. Apaga as tentativas de trial
+        conn.exec("DELETE FROM trial_attempts WHERE product_sku IN (#{product_skus_sql_list})")
+        
+        # 4. Apaga as licenças (chaves)
+        conn.exec_params("DELETE FROM licenses WHERE family = $1", [family_name])
+        
+        # 5. Apaga componentes de suite
+        conn.exec("DELETE FROM suite_components WHERE suite_product_id IN (#{product_skus_sql_list}) OR component_product_id IN (#{product_skus_sql_list})")
+
+        # 6. Apaga as pontes com plataformas
+        conn.exec("DELETE FROM platform_products WHERE product_sku IN (#{product_skus_sql_list})")
+      end
+
+      # 7. Apaga os produtos
+      conn.exec_params("DELETE FROM products WHERE family = $1", [family_name])
+
+      # 8. Apaga as configurações da família (regras de e-mail, notificadores, etc.)
+      conn.exec_params("DELETE FROM email_rules WHERE family_name = $1", [family_name])
+      conn.exec_params("DELETE FROM admin_notifiers WHERE family_name = $1", [family_name])
+      conn.exec_params("DELETE FROM product_family_info WHERE family_name = $1", [family_name])
+    end
+
+    puts "[ADMIN] Família #{family_name} e todos os seus dados foram excluídos com sucesso."
+    redirect '/admin/families'
+  end
+
   # --- ROTAS DE GERENCIAMENTO DE LICENÇAS ---
   get '/admin/new' do
     protected!
