@@ -5,14 +5,7 @@ require 'pg'
 require 'json'
 require 'csv'
 require 'dotenv/load'
-begin
-  # Tenta carregar o arquivo específico para versões mais novas da gem
-  require 'sendgrid-ruby/event_webhook'
-rescue LoadError
-  # Se falhar (indicando uma gem mais antiga), não faz nada e continua.
-  # A classe de erro provavelmente já foi carregada pelo require principal.
-  puts "[INFO] Módulo 'sendgrid-ruby/event_webhook' não encontrado, pulando (provavelmente gem antiga)."
-end
+require 'sendgrid-ruby/event_webhook'
 require_relative 'models/license.rb'
 require_relative 'models/product.rb'
 require_relative 'mailer.rb'
