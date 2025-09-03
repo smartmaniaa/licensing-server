@@ -399,16 +399,17 @@ class SmartManiaaApp < Sinatra::Base
     expires_at = params['expires_at']
     expires_at = expires_at.empty? ? nil : Time.parse(expires_at)
     
-    full_phone = build_phone_from_params(params)
-    $db.exec_params("UPDATE licenses SET phone = $1 WHERE id = $2", [full_phone, license_id])
+    # Usando o helper para construir o número de telefone de forma centralizada
+    phone = build_phone_from_params(params)
 
     if product_skus.nil? || product_skus.empty?
       halt 400, "Erro: Você deve selecionar pelo menos um produto."
     end
     
+    # Validação para garantir que todos os produtos são da mesma família
+    # Esta lógica pode ser melhorada, mas por enquanto funciona
     if product_skus.length > 1
-      formatted_skus = "{#{product_skus.join(',')}}"
-      families = $db.exec_params("SELECT DISTINCT family FROM products WHERE sku = ANY($1::varchar[])", [formatted_skus])
+      families = $db.exec_params("SELECT DISTINCT family FROM products WHERE sku = ANY($1::varchar[])", ["{#{product_skus.join(',')}}"])
       if families.num_tuples > 1
         halt 400, "Erro: Todos os produtos selecionados devem pertencer à mesma família."
       end
@@ -416,11 +417,19 @@ class SmartManiaaApp < Sinatra::Base
     
     family = License.find_family_by_sku(product_skus.first)
     
+    # Apenas esta chamada é necessária. 
+    # O método 'provision_license' já sabe como salvar o telefone.
     License.provision_license(
-      email: email, family: family, product_skus: product_skus, origin: origin,
-      status: 'active', expires_at: expires_at, grant_source: "manual_admin_#{origin}",
+      email: email, 
+      family: family, 
+      product_skus: product_skus, 
+      origin: origin,
+      status: 'active', 
+      expires_at: expires_at, 
+      grant_source: "manual_admin_#{origin}",
       phone: phone
     )
+
     puts "[ADMIN] Licença manual criada para '#{email}' com os SKUs: #{product_skus.join(', ')}."
     redirect '/admin'
   end
