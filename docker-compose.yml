@@ -9,7 +9,7 @@ services:
     environment:
       POSTGRES_DB: smartmaniaa_licensing_dev
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: '@Rico5626'
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD} 
 
   web:
     build: .

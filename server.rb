@@ -60,7 +60,7 @@ class SmartManiaaApp < Sinatra::Base
           host: ENV.fetch('DATABASE_HOST', 'localhost'),
           dbname: ENV.fetch('DATABASE_NAME', 'smartmaniaa_licensing_dev'),
           user: ENV.fetch('DATABASE_USER', 'postgres'),
-          password: ENV.fetch('DATABASE_PASSWORD', '@Rico5626')
+          password: ENV.fetch('DATABASE_PASSWORD') 
         )
         puts "=> Conectado ao banco de dados local/Docker com sucesso!"
       end
