@@ -607,15 +607,26 @@ class SmartManiaaApp < Sinatra::Base
     
     begin
       event_webhook = SendGrid::EventWebhook.new
-      event_webhook.verify_signature(
-        public_key: ENV['SENDGRID_WEBHOOK_KEY'],
-        payload: request_body,
-        signature: signature,
-        timestamp: timestamp
+      
+      # --- CORREÇÃO APLICADA AQUI ---
+      # 1. Os argumentos agora são passados de forma posicional (sem as chaves do Hash).
+      # 2. O método retorna `true` ou `false`, então verificamos o retorno.
+      is_valid = event_webhook.verify_signature(
+        ENV['SENDGRID_WEBHOOK_KEY'],
+        request_body,
+        signature,
+        timestamp
       )
+
+      unless is_valid
+        puts "⚠️ ERRO DE SEGURANÇA: Assinatura do webhook da SendGrid é INVÁLIDA."
+        halt 403, "Signature verification failed"
+      end
+      
       puts "[SENDGRID WEBHOOK] Assinatura verificada com sucesso."
     rescue => e
-      puts "⚠️ ERRO DE SEGURANÇA: Falha na verificação da assinatura do webhook da SendGrid: #{e.message}"
+      # Este bloco agora captura outros erros inesperados durante a verificação.
+      puts "⚠️ ERRO INESPERADO na verificação do webhook da SendGrid: #{e.class} - #{e.message}"
       halt 403, "Signature verification failed"
     end
     
