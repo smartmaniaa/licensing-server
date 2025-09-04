@@ -47,8 +47,8 @@ class SmartManiaaApp < Sinatra::Base
 
   use Rack::MethodOverride
   enable :sessions
-  set :session_secret, ENV.fetch("SESSION_SECRET", "c44e8293a0090265f725883a9c5ce960e58284695e84942a4981362a2b72f129")
-
+  set :session_secret, ENV.fetch("SESSION_SECRET")
+  
   configure do
     retries = 5
     begin
