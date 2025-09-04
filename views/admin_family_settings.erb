@@ -57,9 +57,9 @@
           <p class="help-text">E-mail de contato para esta família. Variável: {{family_support_email}}</p>
         </div>
         <div class="form-group">
-          <label for="logo_url">URL do Logo</label>
-          <input type="text" id="logo_url" name="logo_url" value="<%= @family_info['logo_url'] %>">
-          <p class="help-text">URL da imagem do logo para esta família. Variável: {{family_logo_url}}</p>
+          <label for="trial_duration_days">Duração do Trial (em dias)</label>
+          <input type="number" id="trial_duration_days" name="trial_duration_days" value="<%= @family_info['trial_duration_days'] %>">
+          <p class="help-text">Defina quantos dias o trial para esta família de produtos irá durar (ex: 7, 14, 30).</p>
         </div>
         <div class="form-group">
           <label for="sender_name">Nome do Remetente do E-mail</label>

@@ -26,4 +26,5 @@ COPY . .
 EXPOSE 9292
 
 # O comando principal que será executado quando o container iniciar
-CMD ["bundle", "exec", "puma", "-C", "config/puma.rb"]
+
+CMD ["bundle", "exec", "puma", "-b", "tcp://0.0.0.0:9292"]

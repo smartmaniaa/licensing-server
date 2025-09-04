@@ -1,14 +1,12 @@
-# ---- models/license.rb (VERSÃO FINAL DEFINITIVA E CORRIGIDA) ----
+# ---- models/license.rb (VERSÃO REATORIZADA E FINAL) ----
 
 require 'securerandom'
 require 'date'
 
 class License
 
-   # Garante que sempre encontre a licença correta, independente de pequenas variações
-  def self.find_or_create_by_email_and_family(email, family)
+   def self.find_or_create_by_email_and_family(email, family)
     conn = $db
-    # Busca por email e família, ignorando maiúsculas/minúsculas
     result = conn.exec_params("SELECT * FROM licenses WHERE lower(email) = lower($1) AND lower(family) = lower($2) LIMIT 1", [email, family])
     if result.num_tuples > 0
       [result[0]['id'], result[0]['license_key'], false]
@@ -19,29 +17,23 @@ class License
     end
   end
 
-  #-- Lógica de bloqueio de trial robusta.
   def self.trial_exists?(email:, mac_address:, family:)
-    license_id_result = $db.exec_params("SELECT id FROM licenses WHERE (email = $1 OR mac_address = $2) AND family = $3 LIMIT 1", [email, mac_address, family])
+    license_id_result = $db.exec_params("SELECT id FROM licenses WHERE (lower(email) = lower($1) OR mac_address = $2) AND lower(family) = lower($3) LIMIT 1", [email, mac_address, family])
     return false if license_id_result.num_tuples.zero?
     license_id = license_id_result[0]['id']
-    result = $db.exec_params("SELECT 1 FROM license_entitlements WHERE license_id = $1 AND (origin = 'trial' OR trial_expires_at IS NOT NULL) LIMIT 1", [license_id])
+    result = $db.exec_params("SELECT 1 FROM license_entitlements WHERE license_id = $1 AND origin = 'trial' LIMIT 1", [license_id])
     result.ntuples > 0
   end
 
-  #-- Orquestrador principal: provisiona novos direitos de uso e dispara e-mails (VERSÃO FINAL COMPLETA)
   def self.provision_license(email:, family:, product_skus:, origin:, grant_source:, trial_expires_at: nil, expires_at: nil, status: 'active', platform_subscription_id: nil, mac_address: nil, locale: nil, stripe_customer_id: nil, phone: nil)
     conn = $db
     license_id, key, was_new_license = find_or_create_by_email_and_family(email, family)
 
-    if stripe_customer_id
-      conn.exec_params("UPDATE licenses SET stripe_customer_id = $1 WHERE id = $2", [stripe_customer_id, license_id])
-    end
-    
-    # --- NOVO BLOCO PARA SALVAR O TELEFONE ---
-    if phone && !phone.empty?
-      conn.exec_params("UPDATE licenses SET phone = $1 WHERE id = $2", [phone, license_id])
-    end
-    
+    conn.exec_params("UPDATE licenses SET stripe_customer_id = $1 WHERE id = $2", [stripe_customer_id, license_id]) if stripe_customer_id
+    conn.exec_params("UPDATE licenses SET phone = $1 WHERE id = $2", [phone, license_id]) if phone && !phone.empty?
+    conn.exec_params("UPDATE licenses SET locale = $1 WHERE id = $2 AND locale IS NULL", [locale, license_id]) if locale
+    conn.exec_params("UPDATE licenses SET mac_address = $1 WHERE id = $2 AND mac_address IS NULL", [mac_address, license_id]) if mac_address
+
     if was_new_license
       begin
         puts "[EMAIL CAMADA 1] Chave nova criada. Enviando e-mail padrão com a chave."
@@ -51,17 +43,8 @@ class License
       end
     end
 
-    if locale
-      conn.exec_params("UPDATE licenses SET locale = $1 WHERE id = $2 AND locale IS NULL", [locale, license_id])
-      puts "[LICENSE] Locale '#{locale}' salvo para a licença ID #{license_id}."
-    end
-    
-    if mac_address
-      conn.exec_params("UPDATE licenses SET mac_address = $1 WHERE id = $2 AND mac_address IS NULL", [mac_address, license_id])
-    end
-
     if !was_new_license && origin == 'stripe'
-      puts "[LICENSE] Cliente existente comprando via Stripe. Desvinculando MAC Address para flexibilidade de ativação."
+      puts "[LICENSE] Cliente existente a comprar via Stripe. A desvincular MAC Address para flexibilidade de ativação."
       unlink_mac(license_id) 
     end
 
@@ -69,12 +52,9 @@ class License
 
     full_product_skus.each do |sku|
       if platform_subscription_id
-        existing = conn.exec_params(
-          "SELECT 1 FROM license_entitlements WHERE platform_subscription_id = $1 AND product_sku = $2 LIMIT 1",
-          [platform_subscription_id, sku]
-        )
+        existing = conn.exec_params("SELECT 1 FROM license_entitlements WHERE platform_subscription_id = $1 AND product_sku = $2 LIMIT 1", [platform_subscription_id, sku])
         if existing.num_tuples > 0
-          puts "[IDEMPOTENCY] Direito de uso para SKU '#{sku}' e Assinatura '#{platform_subscription_id}' já existe. Pulando."
+          puts "[IDEMPOTENCY] Direito de uso para SKU '#{sku}' e Assinatura '#{platform_subscription_id}' já existe. A pular."
           next
         end
       end
@@ -88,7 +68,9 @@ class License
 
     begin
       trigger = nil
-      if status == 'trial'
+      # --- LÓGICA DE GATILHO ATUALIZADA ---
+      # O gatilho para 'trial_started' agora é baseado na origem, não no status.
+      if origin == 'trial'
         trigger = 'trial_started'
       elsif origin == 'stripe'
         trigger = 'subscription_started'
@@ -99,12 +81,9 @@ class License
       end
 
       if trigger
-        puts "[EMAIL CAMADA 2] Gatilho '#{trigger}' detectado. Verificando regras de e-mail."
+        puts "[EMAIL CAMADA 2] Gatilho '#{trigger}' detetado. A verificar regras de e-mail."
         trigger_customer_email(
-          trigger_event: trigger,
-          family: family,
-          to_email: email,
-          license_key: key,
+          trigger_event: trigger, family: family, to_email: email, license_key: key,
           trial_end_date: trial_expires_at ? trial_expires_at.strftime('%d/%m/%Y') : '',
           granted_skus: full_product_skus
         )
@@ -121,17 +100,15 @@ class License
 
     [license_id, key, was_new_license]
   end
-  #-- MÉTODOS DE ATUALIZAÇÃO VIA STRIPE
+
   def self.update_entitlement_from_stripe(subscription_id:, new_expires_at:, new_status: 'active')
     $db.exec_params("UPDATE license_entitlements SET expires_at = $1, status = $2 WHERE platform_subscription_id = $3", [new_expires_at, new_status, subscription_id])
   end
 
   def self.update_entitlement_status_from_stripe(subscription_id:, status:)
-    # A query já retorna o objeto de resultado, então nenhuma mudança é necessária aqui.
     $db.exec_params("UPDATE license_entitlements SET status = $1 WHERE platform_subscription_id = $2", [status, subscription_id])
   end
   
-  #-- MÉTODOS DE ADMIN
   def self.unlink_mac(license_id)
     $db.exec_params("UPDATE licenses SET mac_address = NULL WHERE id = $1", [license_id])
   end
@@ -148,7 +125,6 @@ class License
     $db.exec_params("DELETE FROM license_entitlements WHERE id = $1", [entitlement_id])
   end
   
-  #-- MÉTODOS DE LOG DE TRIAL
   def self.all_trial_attempts
     $db.exec('SELECT * FROM trial_attempts ORDER BY attempted_at DESC')
   end
@@ -157,7 +133,6 @@ class License
     $db.exec_params("INSERT INTO trial_attempts (email, mac_address, product_sku, reason, attempted_at) VALUES ($1, $2, $3, $4, NOW())", [email, mac_address, product_sku, reason])
   end
 
-  #-- MÉTODOS AUXILIARES
   def self.generate_key_for_family(family_name)
     prefix = family_name.upcase.gsub(/[^A-Z0-9]/, '')
     random_part = Array.new(3) { SecureRandom.alphanumeric(4).upcase }.join('-')
@@ -185,29 +160,29 @@ class License
     all_skus.uniq
   end
 
-#-- MÉTODO DE BUSCA PARA O PAINEL DE ADMIN (VERSÃO FINAL CORRIGIDA)
+  # --- MÉTODO DE SUMÁRIO ATUALIZADO ---
   def self.all_with_summary
     $db.exec(%q{
       SELECT
         licenses.*,
         COALESCE(
-          -- CORREÇÃO: 1. Primeiro, procuramos por um status 'Ativo' (pago).
+          -- 1. Procura por um status 'Ativo' (pago, origem diferente de trial).
           (SELECT 'Ativo' FROM license_entitlements le
-           WHERE le.license_id = licenses.id AND le.status = 'active' LIMIT 1),
+           WHERE le.license_id = licenses.id AND le.status = 'active' AND le.origin != 'trial' LIMIT 1),
            
-          -- 2. Se não for pago, procuramos por um 'Trial' ainda válido.
+          -- 2. Se não for pago, procura por um 'Trial' ainda válido, baseado na ORIGEM.
           (SELECT 'Trial' FROM license_entitlements le
-           WHERE le.license_id = licenses.id AND le.status = 'trial' 
-           AND (le.trial_expires_at > NOW() OR le.trial_expires_at IS NULL) LIMIT 1),
+           WHERE le.license_id = licenses.id AND le.origin = 'trial' AND le.status = 'active'
+           AND (le.trial_expires_at > NOW()) LIMIT 1),
            
           -- 3. Se não encontrar nenhum dos dois, a licença é 'Inativo'.
           'Inativo'
         ) AS summary_status,
         
-        -- A lista de origens continua correta, mostrando ambas.
+        -- A lista de origens (mostra todas as que estão ativas).
         (SELECT string_agg(DISTINCT le.origin, ', ')
          FROM license_entitlements le
-         WHERE le.license_id = licenses.id AND le.status IN ('active', 'trial')) AS summary_origins
+         WHERE le.license_id = licenses.id AND le.status = 'active') AS summary_origins
       FROM
         licenses
       ORDER BY
@@ -215,9 +190,7 @@ class License
     })
   end
   
-  #-- MÉTODO PRIVADO: Lógica para disparar e-mails para clientes com base nas regras (VERSÃO COMPLETA E CORRIGIDA)
   private_class_method def self.trigger_customer_email(trigger_event:, family:, to_email:, license_key: nil, trial_end_date: '', granted_skus: [])
-    # A query SQL completa que busca o template e as informações da família.
     rule_check = $db.exec_params(%q{
       SELECT
         t.subject, t.body,
@@ -241,9 +214,10 @@ class License
     body.gsub!('{{product_family}}', email_data['display_name'] || family.capitalize)
     body.gsub!('{{family_homepage_url}}', email_data['homepage_url'] || '#')
     body.gsub!('{{family_support_email}}', email_data['support_email'] || 'suporte@maniaa.com.br')
-    body.gsub!('{{family_logo_url}}', email_data['logo_url'] || '')
+    
+    # Removemos a variável de logo que não é mais usada
+    # body.gsub!('{{family_logo_url}}', email_data['logo_url'] || '') 
 
-    # Bloco para listar produtos recém-adicionados (gatilho 'admin_grant_added')
     if body.include?('{{granted_products_list}}') && !granted_skus.empty?
       product_names_result = $db.exec_params(
         "SELECT name FROM products WHERE sku = ANY($1::varchar[]) ORDER BY name",
@@ -257,7 +231,6 @@ class License
       end
     end
 
-    # Bloco para listar links de compra (para templates que ainda o usam)
     if body.include? '{{family_purchase_links}}'
       links_html = ""
       products_in_family = $db.exec_params(
@@ -270,7 +243,7 @@ class License
 
       if products_in_family.num_tuples > 0
         links_html << "<ul>"
-        products_in_family.each { |prod| links_html << "<li><a href='#{prod['purchase_link']}'>Purchase #{prod['name']}</a></li>" }
+        products_in_family.each { |prod| links_html << "<li><a href='#{prod['purchase_link']}'>Comprar #{prod['name']}</a></li>" }
         links_html << "</ul>"
       end
       body.gsub!('{{family_purchase_links}}', links_html)
@@ -285,6 +258,4 @@ class License
     )
   end
 
-  private_class_method :trigger_customer_email
-
-end # FIM DA CLASSE LICENSE
+end

@@ -1,22 +1,18 @@
-# ---- server.rb (VERSÃO FINAL, COMPLETA E CORRIGIDA) ----
+# ---- server.rb (VERSÃO ABSOLUTAMENTE COMPLETA E FINAL) ----
 
 require 'sinatra/base'
 require 'pg'
 require 'json'
 require 'csv'
 require 'dotenv/load'
-# --- INÍCIO DA SOLUÇÃO ---
-# Este bloco torna o servidor resiliente, permitindo que ele inicie
-# mesmo se a gem 'sendgrid-ruby' não for a versão mais nova.
+
+# Carrega o módulo de verificação de webhook da SendGrid de forma segura
 begin
-  # Tenta carregar o arquivo para versões modernas da gem
   require 'sendgrid-ruby/event_webhook'
 rescue LoadError
-  # Se o arquivo não for encontrado (indicando uma gem antiga),
-  # ele captura o erro, avisa no log e continua a execução.
-  puts "[INFO] Módulo 'sendgrid-ruby/event_webhook' não encontrado, pulando. A verificação do webhook da SendGrid pode falhar."
+  puts "[INFO] Módulo 'sendgrid-ruby/event_webhook' não encontrado, pulando."
 end
-# --- FIM DA SOLUÇÃO ---
+
 require_relative 'models/license.rb'
 require_relative 'models/product.rb'
 require_relative 'mailer.rb'
@@ -27,7 +23,6 @@ $stdout.sync = true
 class SmartManiaaApp < Sinatra::Base
   set :bind, '0.0.0.0'
   
-  # MELHORIA: Blocos 'before' unificados para maior clareza.
   before do
     # Garante que a conexão com o banco de dados esteja sempre ativa.
     begin
@@ -88,18 +83,12 @@ class SmartManiaaApp < Sinatra::Base
       @auth ||= Rack::Auth::Basic::Request.new(request.env)
       @auth.provided? and @auth.basic? and @auth.credentials and @auth.credentials == [ENV['ADMIN_USER'], ENV['ADMIN_PASSWORD']]
     end
-  end
 
-  def build_phone_from_params(params)
+    def build_phone_from_params(params)
       return nil unless params['phone_number'] && !params['phone_number'].strip.empty?
-
       country_code = params['country_code']
-      if country_code.empty?
-        country_code = params['other_country_code']&.strip
-      end
-      
+      country_code = params['other_country_code']&.strip if country_code.empty?
       return nil unless country_code && !country_code.empty?
-
       country_code = "+#{country_code.gsub(/\D/, '')}" unless country_code.start_with?('+')
       cleaned_number = params['phone_number'].gsub(/\D/, '')
       "#{country_code}#{cleaned_number}"
@@ -112,6 +101,7 @@ class SmartManiaaApp < Sinatra::Base
         [level.to_s.upcase, source, message, details_json]
       )
     end
+  end
 
   # --- ROTAS PÚBLICAS ---
   get '/' do
@@ -139,42 +129,35 @@ class SmartManiaaApp < Sinatra::Base
     email = params['email']
     mac_address = params['mac_address']
     product_sku = params['product_sku']
-    phone = params['phone'] # CORREÇÃO: Captura de telefone adicionada
+    phone = params['phone']
 
-    # CORREÇÃO: Verifica a validade do SKU antes de prosseguir
     family = License.find_family_by_sku(product_sku)
     unless family
       halt 404, { error: "Produto com SKU '#{product_sku}' não encontrado.", status: "invalid_sku" }.to_json
     end
 
     if License.trial_exists?(email: email, mac_address: mac_address, family: family)
-      License.log_trial_denied(
-        email: email, mac_address: mac_address, product_sku: product_sku, 
-        reason: "Trial já utilizado para este e-mail ou MAC na família #{family}"
-      )
+      License.log_trial_denied(email: email, mac_address: mac_address, product_sku: product_sku, reason: "Trial já utilizado para este e-mail ou MAC na família #{family}")
       puts "[TRIAL] Negado: Tentativa de novo trial para '#{email}' ou MAC '#{mac_address}' que já possui histórico."
-      
       begin
-        License.send(:trigger_customer_email,
-          trigger_event: 'trial_denied',
-          family: family,
-          to_email: email
-        )
+        License.send(:trigger_customer_email, trigger_event: 'trial_denied', family: family, to_email: email)
       rescue => e
         puts "[ALERTA] Falha ao enviar e-mail de trial negado: #{e.class} - #{e.message}"
       end
-      
       halt 403, { error: "Trial já existe para este email ou MAC.", status: "denied" }.to_json
     end
 
+    family_info = $db.exec_params("SELECT trial_duration_days FROM product_family_info WHERE family_name = $1", [family]).first
+    trial_days = (family_info && family_info['trial_duration_days'].to_i > 0) ? family_info['trial_duration_days'].to_i : 7
+    puts "[TRIAL] Duração definida para #{trial_days} dia(s) para a família '#{family}'."
+    
     family_skus = License.all_family_skus(family)
-    expires_at = (Time.now + 7*24*60*60)
+    expires_at = (Time.now + trial_days * 24 * 60 * 60)
 
     _license_id, key, _was_new = License.provision_license(
       email: email, family: family, product_skus: family_skus, origin: 'trial',
-      status: 'trial', trial_expires_at: expires_at, mac_address: mac_address,
-      grant_source: "trial_#{family}",
-      phone: phone # CORREÇÃO: Passando o telefone
+      status: 'active', trial_expires_at: expires_at, mac_address: mac_address,
+      grant_source: "trial_#{family}", phone: phone
     )
     puts "[TRIAL] Sucesso: Trial iniciado para '#{email}' no MAC '#{mac_address}'."
     { license_key: key, status: "trial_started", expires_at: expires_at }.to_json
@@ -203,7 +186,11 @@ class SmartManiaaApp < Sinatra::Base
       %Q{
         SELECT * FROM license_entitlements
         WHERE license_id = $1 AND product_sku = $2 AND status = 'active'
-        AND (expires_at > NOW() OR expires_at IS NULL) LIMIT 1
+        AND (
+          (origin != 'trial' AND (expires_at > NOW() OR expires_at IS NULL)) OR
+          (origin = 'trial' AND trial_expires_at > NOW())
+        )
+        LIMIT 1
       },
       [license['id'], sku]
     )
@@ -330,61 +317,37 @@ class SmartManiaaApp < Sinatra::Base
     redirect '/admin/products'
   end
 
-  # Adicione este bloco de código junto com as outras rotas de admin
-
   post '/admin/family/:name/delete' do
     protected!
     family_name = params['name']
 
     puts "[ADMIN] Iniciando exclusão completa da família: #{family_name}"
 
-    # Usamos uma transação para garantir que tudo seja executado com sucesso, ou nada é alterado.
     $db.transaction do |conn|
-      # Encontra todos os SKUs de produtos da família
       product_skus_res = conn.exec_params("SELECT sku FROM products WHERE family = $1", [family_name])
       product_skus = product_skus_res.map { |row| row['sku'] }
 
       if product_skus.any?
-        # Encontra todos os IDs de licença (chaves) da família
         license_ids_res = conn.exec_params("SELECT id FROM licenses WHERE family = $1", [family_name])
         license_ids = license_ids_res.map { |row| row['id'] }
 
         if license_ids.any?
           license_ids_sql_list = license_ids.join(',')
-
-          # Encontra todos os IDs de entitlements
           entitlement_ids_res = conn.exec("SELECT id FROM license_entitlements WHERE license_id IN (#{license_ids_sql_list})")
           entitlement_ids = entitlement_ids_res.map { |row| row['id'] }
-
           if entitlement_ids.any?
             entitlement_ids_sql_list = entitlement_ids.join(',')
-            # 1. Apaga os grants dos entitlements
             conn.exec("DELETE FROM entitlement_grants WHERE license_entitlement_id IN (#{entitlement_ids_sql_list})")
           end
-
-          # 2. Apaga os entitlements
           conn.exec("DELETE FROM license_entitlements WHERE license_id IN (#{license_ids_sql_list})")
         end
-
         product_skus_sql_list = product_skus.map { |sku| "'#{conn.escape_string(sku)}'" }.join(',')
-        
-        # 3. Apaga as tentativas de trial
         conn.exec("DELETE FROM trial_attempts WHERE product_sku IN (#{product_skus_sql_list})")
-        
-        # 4. Apaga as licenças (chaves)
         conn.exec_params("DELETE FROM licenses WHERE family = $1", [family_name])
-        
-        # 5. Apaga componentes de suite
         conn.exec("DELETE FROM suite_components WHERE suite_product_id IN (#{product_skus_sql_list}) OR component_product_id IN (#{product_skus_sql_list})")
-
-        # 6. Apaga as pontes com plataformas
         conn.exec("DELETE FROM platform_products WHERE product_sku IN (#{product_skus_sql_list})")
       end
-
-      # 7. Apaga os produtos
       conn.exec_params("DELETE FROM products WHERE family = $1", [family_name])
-
-      # 8. Apaga as configurações da família (regras de e-mail, notificadores, etc.)
       conn.exec_params("DELETE FROM email_rules WHERE family_name = $1", [family_name])
       conn.exec_params("DELETE FROM admin_notifiers WHERE family_name = $1", [family_name])
       conn.exec_params("DELETE FROM product_family_info WHERE family_name = $1", [family_name])
@@ -411,15 +374,12 @@ class SmartManiaaApp < Sinatra::Base
     expires_at = params['expires_at']
     expires_at = expires_at.empty? ? nil : Time.parse(expires_at)
     
-    # Usando o helper para construir o número de telefone de forma centralizada
     phone = build_phone_from_params(params)
 
     if product_skus.nil? || product_skus.empty?
       halt 400, "Erro: Você deve selecionar pelo menos um produto."
     end
     
-    # Validação para garantir que todos os produtos são da mesma família
-    # Esta lógica pode ser melhorada, mas por enquanto funciona
     if product_skus.length > 1
       families = $db.exec_params("SELECT DISTINCT family FROM products WHERE sku = ANY($1::varchar[])", ["{#{product_skus.join(',')}}"])
       if families.num_tuples > 1
@@ -429,8 +389,6 @@ class SmartManiaaApp < Sinatra::Base
     
     family = License.find_family_by_sku(product_skus.first)
     
-    # Apenas esta chamada é necessária. 
-    # O método 'provision_license' já sabe como salvar o telefone.
     License.provision_license(
       email: email, 
       family: family, 
@@ -493,21 +451,9 @@ class SmartManiaaApp < Sinatra::Base
   post '/admin/license/:id/phone' do
     protected!
     license_id = params['id']
-  
-    full_phone = nil
-    if params['phone_number'] && !params['phone_number'].strip.empty?
-      country_code = params['country_code']
-      if country_code.empty?
-        country_code = params['other_country_code'].strip
-      end
-      country_code = "+#{country_code.gsub(/\D/, '')}" unless country_code.start_with?('+')
-      cleaned_number = params['phone_number'].gsub(/\D/, '')
-      full_phone = "#{country_code}#{cleaned_number}"
-    end
-
+    full_phone = build_phone_from_params(params)
     $db.exec_params("UPDATE licenses SET phone = $1 WHERE id = $2", [full_phone, license_id])
     puts "[ADMIN] Telefone da Licença ID #{license_id} foi atualizado."
-    
     redirect "/admin/license/#{license_id}"
   end
 
@@ -543,6 +489,11 @@ class SmartManiaaApp < Sinatra::Base
       WHERE family NOT IN (SELECT family_name FROM product_family_info)
     })
     
+    $db.exec(%q{
+      DELETE FROM product_family_info
+      WHERE family_name NOT IN (SELECT DISTINCT family FROM products)
+    })
+    
     @families = $db.exec("SELECT * FROM product_family_info ORDER BY family_name")
     erb :admin_families
   end
@@ -569,8 +520,8 @@ class SmartManiaaApp < Sinatra::Base
     family_name = params['name']
 
     $db.exec_params(
-      "UPDATE product_family_info SET display_name = $1, homepage_url = $2, support_email = $3, logo_url = $4, sender_name = $5 WHERE family_name = $6",
-      [params['display_name'], params['homepage_url'], params['support_email'], params['logo_url'], params['sender_name'], family_name]
+      "UPDATE product_family_info SET display_name = $1, homepage_url = $2, support_email = $3, sender_name = $4, trial_duration_days = $5 WHERE family_name = $6",
+      [params['display_name'], params['homepage_url'], params['support_email'], params['sender_name'], params['trial_duration_days'], family_name]
     )
 
     if params['new_notifier_email'] && !params['new_notifier_email'].empty?
@@ -644,9 +595,7 @@ class SmartManiaaApp < Sinatra::Base
     end
   end
 
-  # --- ROTA SEGURA PARA RECEBER E PROCESSAR EVENTOS DA SENDGRID (VERSÃO FINAL) ---
   post '/webhook/sendgrid_events' do
-    # Verifica se a chave de segurança do webhook está configurada no ambiente
     unless ENV['SENDGRID_WEBHOOK_KEY']
       puts "‼️ ERRO CRÍTICO: Variável de ambiente SENDGRID_WEBHOOK_KEY faltando!"
       halt 500, "Configuração de webhook ausente"
@@ -656,18 +605,20 @@ class SmartManiaaApp < Sinatra::Base
     signature = request.env['HTTP_X_TWILIO_EMAIL_EVENT_WEBHOOK_SIGNATURE']
     timestamp = request.env['HTTP_X_TWILIO_EMAIL_EVENT_WEBHOOK_TIMESTAMP']
     
-    # Bloco de segurança para verificar a assinatura do webhook
     begin
-      processor = SendGrid::EventWebhook::Processor.new
-      processor.process(public_key: ENV['SENDGRID_WEBHOOK_KEY'], payload: request_body, signature: signature, timestamp: timestamp)
+      event_webhook = SendGrid::EventWebhook.new
+      event_webhook.verify_signature(
+        public_key: ENV['SENDGRID_WEBHOOK_KEY'],
+        payload: request_body,
+        signature: signature,
+        timestamp: timestamp
+      )
       puts "[SENDGRID WEBHOOK] Assinatura verificada com sucesso."
-    rescue => e # Captura qualquer erro de verificação de assinatura
+    rescue => e
       puts "⚠️ ERRO DE SEGURANÇA: Falha na verificação da assinatura do webhook da SendGrid: #{e.message}"
-      log_event(level: 'error', source: 'sendgrid_webhook', message: 'Falha na verificação da assinatura do webhook', details: { error: e.message })
       halt 403, "Signature verification failed"
     end
     
-    # Se a assinatura for válida, processamos os eventos
     begin
       events = JSON.parse(request_body)
     rescue JSON::ParserError
@@ -678,32 +629,21 @@ class SmartManiaaApp < Sinatra::Base
       event_type = event['event']
       email = event['email']
       
-      # Encontra a licença associada para sabermos a família do produto e notificar o admin correto
       license_info = $db.exec_params("SELECT family FROM licenses WHERE lower(email) = lower($1) LIMIT 1", [email]).first
-      family_name = license_info ? license_info['family'] : 'geral' # Usa 'geral' se não encontrar uma família específica
+      family_name = license_info ? license_info['family'] : 'geral'
 
       case event_type
       when 'bounce', 'dropped'
-        # 1. Captura detalhada do erro a partir do payload do webhook.
         reason = event['reason'] || "Não especificado"
         status_code = event['status'] || "N/A"
         bounce_type = event['type'] || "N/A"
-
-        # 2. Mensagem de erro completa para os logs e notificações.
         error_details_text = "Motivo: #{reason} (Status: #{status_code}, Tipo de Bounce: #{bounce_type})"
         
         puts "[SENDGRID] Entrega FALHOU para '#{email}'. #{error_details_text}"
         $db.exec_params("UPDATE licenses SET email_status = 'bounced' WHERE lower(email) = lower($1)", [email])
         
-        # 3. Registra no log do sistema com a causa real.
-        log_event(
-          level: 'error',
-          source: 'sendgrid_webhook',
-          message: "Falha permanente na entrega para o e-mail: #{email}",
-          details: event # O payload completo do evento é salvo para auditoria
-        )
+        log_event(level: 'error', source: 'sendgrid_webhook', message: "Falha permanente na entrega para o e-mail: #{email}", details: event)
         
-        # 4. Notifica o admin com a causa real.
         Mailer.send_admin_notification(
           subject: "‼️ Falha na Entrega de E-mail para #{email}",
           body: "O envio de e-mail para <strong>#{email}</strong> falhou permanentemente.<br><br><strong>Detalhes do Erro:</strong><br>#{error_details_text}",
@@ -714,12 +654,7 @@ class SmartManiaaApp < Sinatra::Base
         puts "[SENDGRID] ALERTA DE SPAM para '#{email}'."
         $db.exec_params("UPDATE licenses SET email_status = 'spam_report' WHERE lower(email) = lower($1)", [email])
         
-        log_event(
-          level: 'warning',
-          source: 'sendgrid_webhook',
-          message: "Usuário #{email} marcou e-mail como SPAM.",
-          details: event
-        )
+        log_event(level: 'warning', source: 'sendgrid_webhook', message: "Usuário #{email} marcou e-mail como SPAM.", details: event)
         Mailer.send_admin_notification(
           subject: "⚠️ Alerta de SPAM para #{email}",
           body: "O usuário com o e-mail <strong>#{email}</strong> marcou um de nossos e-mails como SPAM. A reputação de envio pode ser afetada.",
@@ -731,7 +666,6 @@ class SmartManiaaApp < Sinatra::Base
         $db.exec_params("UPDATE licenses SET email_status = 'ok' WHERE lower(email) = lower($1) AND email_status != 'ok'", [email])
       
       else
-        # Registra eventos não tratados para futura análise, mas sem alarde.
         puts "[SENDGRID] Evento não mapeado recebido: #{event_type} para o e-mail #{email}"
         log_event(level: 'info', source: 'sendgrid_webhook', message: "Recebido evento não mapeado: #{event_type}", details: event)
       end
