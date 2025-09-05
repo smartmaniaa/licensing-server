@@ -597,68 +597,72 @@ class SmartManiaaApp < Sinatra::Base
   end
 
   post '/webhook/sendgrid_events' do
-  # ===================================================================
-  # AVISO: O BLOCO DE VERIFICAÇÃO DE ASSINATURA FOI REMOVIDO PARA TESTES
-  # ISTO É INSEGURO E DEVE SER REVERTIDO POSTERIORMENTE
-  # ===================================================================
-  
-  request_body = request.body.read
-  
-  begin
-    events = JSON.parse(request_body)
-  rescue JSON::ParserError
-    halt 400, "Invalid JSON payload"
-  end
-
-  events.each do |event|
-    event_type = event['event']
-    email = event['email']
+    # Bloco de segurança que precisa ser reativado
+    # unless ENV['SENDGRID_WEBHOOK_KEY'] ... end
     
-    license_info = $db.exec_params("SELECT family FROM licenses WHERE lower(email) = lower($1) LIMIT 1", [email]).first
-    family_name = license_info ? license_info['family'] : 'geral'
-
-    case event_type
-    when 'bounce', 'dropped'
-      reason = event['reason'] || "Não especificado"
-      status_code = event['status'] || "N/A"
-      bounce_type = event['type'] || "N/A"
-      error_details_text = "Motivo: #{reason} (Status: #{status_code}, Tipo de Bounce: #{bounce_type})"
-      
-      puts "[SENDGRID] Entrega FALHOU para '#{email}'. #{error_details_text}"
-      $db.exec_params("UPDATE licenses SET email_status = 'bounced' WHERE lower(email) = lower($1)", [email])
-      
-      log_event(level: 'error', source: 'sendgrid_webhook', message: "Falha permanente na entrega para o e-mail: #{email}", details: event)
-      
-      Mailer.send_admin_notification(
-        subject: "‼️ Falha na Entrega de E-mail para #{email}",
-        body: "O envio de e-mail para <strong>#{email}</strong> falhou permanentemente.<br><br><strong>Detalhes do Erro:</strong><br>#{error_details_text}",
-        family: family_name
-      )
-
-    when 'spamreport'
-      puts "[SENDGRID] ALERTA DE SPAM para '#{email}'."
-      $db.exec_params("UPDATE licenses SET email_status = 'spam_report' WHERE lower(email) = lower($1)", [email])
-      
-      log_event(level: 'warning', source: 'sendgrid_webhook', message: "Usuário #{email} marcou e-mail como SPAM.", details: event)
-      Mailer.send_admin_notification(
-        subject: "⚠️ Alerta de SPAM para #{email}",
-        body: "O usuário com o e-mail <strong>#{email}</strong> marcou um de nossos e-mails como SPAM. A reputação de envio pode ser afetada.",
-        family: family_name
-      )
-      
-    when 'delivered'
-      puts "[SENDGRID] E-mail para '#{email}' entregue com sucesso."
-      $db.exec_params("UPDATE licenses SET email_status = 'ok' WHERE lower(email) = lower($1) AND email_status != 'ok'", [email])
+    request_body = request.body.read
     
-    else
-      puts "[SENDGRID] Evento não mapeado recebido: #{event_type} para o e-mail #{email}"
-      log_event(level: 'info', source: 'sendgrid_webhook', message: "Recebido evento não mapeado: #{event_type}", details: event)
+    # Bloco de verificação de assinatura que precisa ser reativado
+    # begin ... rescue ... end
+
+    begin
+      events = JSON.parse(request_body)
+    rescue JSON::ParserError
+      halt 400, "Invalid JSON payload"
     end
-  end
 
-  status 200
-  body 'Events received'
-end
+    events.each do |event|
+      event_type = event['event']
+      email = event['email']
+      
+      license_info = $db.exec_params("SELECT family FROM licenses WHERE lower(email) = lower($1) LIMIT 1", [email]).first
+      family_name = license_info ? license_info['family'] : 'geral'
+
+      case event_type
+      when 'bounce', 'dropped'
+        reason = event['reason'] || "Não especificado"
+        status_code = event['status'] || "N/A"
+        bounce_type = event['type'] || "N/A"
+        error_details_text = "Motivo: #{reason} (Status: #{status_code}, Tipo de Bounce: #{bounce_type})"
+        
+        puts "[SENDGRID] Entrega FALHOU para '#{email}'. #{error_details_text}"
+        $db.exec_params("UPDATE licenses SET email_status = 'bounced' WHERE lower(email) = lower($1)", [email])
+        
+        # --- CORREÇÃO APLICADA AQUI ---
+        SmartManiaaApp.log_event(level: 'error', source: 'sendgrid_webhook', message: "Falha permanente na entrega para o e-mail: #{email}", details: event)
+        
+        Mailer.send_admin_notification(
+          subject: "‼️ Falha na Entrega de E-mail para #{email}",
+          body: "O envio de e-mail para <strong>#{email}</strong> falhou permanentemente.<br><br><strong>Detalhes do Erro:</strong><br>#{error_details_text}",
+          family: family_name
+        )
+
+      when 'spamreport'
+        puts "[SENDGRID] ALERTA DE SPAM para '#{email}'."
+        $db.exec_params("UPDATE licenses SET email_status = 'spam_report' WHERE lower(email) = lower($1)", [email])
+        
+        # --- CORREÇÃO APLICADA AQUI ---
+        SmartManiaaApp.log_event(level: 'warning', source: 'sendgrid_webhook', message: "Usuário #{email} marcou e-mail como SPAM.", details: event)
+        Mailer.send_admin_notification(
+          subject: "⚠️ Alerta de SPAM para #{email}",
+          body: "O usuário com o e-mail <strong>#{email}</strong> marcou um de nossos e-mails como SPAM. A reputação de envio pode ser afetada.",
+          family: family_name
+        )
+        
+      when 'delivered'
+        puts "[SENDGRID] E-mail para '#{email}' entregue com sucesso."
+        $db.exec_params("UPDATE licenses SET email_status = 'ok' WHERE lower(email) = lower($1) AND email_status != 'ok'", [email])
+      
+      else
+        puts "[SENDGRID] Evento não mapeado recebido: #{event_type} para o e-mail #{email}"
+        # --- CORREÇÃO APLICADA AQUI ---
+        SmartManiaaApp.log_event(level: 'info', source: 'sendgrid_webhook', message: "Recebido evento não mapeado: #{event_type}", details: event)
+      end
+    end
+
+    status 200
+    body 'Events received'
+  end
 
   # --- Bloco final de inicialização ---
   port = ENV.fetch('PORT', 9292)
