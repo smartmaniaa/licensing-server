@@ -18,7 +18,16 @@
     a { color: #3498db; text-decoration: none;}
     a:hover { text-decoration: underline;}
     .status-ativo { color: #27ae60; font-weight: bold; }
+    .status-trial { color: #2980b9; font-weight: bold; }
     .status-inativo { color: #7f8c8d; }
+    .email-alert {
+      color: #c0392b;
+      font-weight: bold;
+      font-size: 1.2em;
+      margin-left: 8px;
+      text-decoration: none;
+      cursor: help;
+    }
   </style>
 </head>
 <body>
@@ -53,7 +62,12 @@
       <% else %>
         <% @licenses.each do |license| %>
           <tr>
-            <td><%= license['email'] %></td>
+            <td>
+              <%= license['email'] %>
+              <% if license['email_status'] != 'ok' %>
+                <span class="email-alert" title="Status do E-mail: <%= license['email_status'].upcase %>">!</span>
+              <% end %>
+            </td>
             <td><a href="/admin/license/<%= license['id'] %>"><code><%= license['license_key'] %></code></a></td>
             <td>
               <span class="status-<%= license['summary_status'].downcase %>">

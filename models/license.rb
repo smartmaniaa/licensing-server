@@ -160,11 +160,12 @@ class License
     all_skus.uniq
   end
 
-  # --- MÉTODO DE SUMÁRIO ATUALIZADO ---
+  # --- MÉTODO DE SUMÁRIO ATUALIZADO (COM EMAIL_STATUS) ---
   def self.all_with_summary
     $db.exec(%q{
       SELECT
         licenses.*,
+        licenses.email_status,
         COALESCE(
           -- 1. Procura por um status 'Ativo' (pago, origem diferente de trial).
           (SELECT 'Ativo' FROM license_entitlements le
