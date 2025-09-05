@@ -39,8 +39,6 @@ module StripeHandler
   
   private
 
-  private
-
   def self.process_event(event)
     event_type = event['type']
     event_id = event['id']
@@ -94,12 +92,18 @@ module StripeHandler
         end
         family = License.find_family_by_sku(product_skus.first)
 
+        # --- CORREÇÃO APLICADA AQUI ---
         status = 'active'
-        expires_at = if subscription_data['status'] == 'trialing'
-                       Time.at(subscription_data['trial_end'])
-                     else
-                       Time.at(subscription_data['current_period_end'])
-                     end
+        # Usamos 'current_period_end', que é confiável tanto para trials quanto para assinaturas pagas.
+        period_end_timestamp = subscription_data['current_period_end']
+
+        # Adicionamos uma verificação de segurança para o caso de o campo vir nulo
+        if period_end_timestamp.nil?
+          puts "‼️ ERRO CRÍTICO: 'current_period_end' está nulo para a assinatura #{subscription_id}. Impossível provisionar."
+          SmartManiaaApp.log_event(level: 'error', source: 'stripe_webhook', message: "Campo 'current_period_end' nulo no evento 'customer.subscription.created' para a subscrição #{subscription_id}", details: event)
+          return [500, {}, ['Dados da assinatura incompletos do Stripe']]
+        end
+        expires_at = Time.at(period_end_timestamp)
         
         License.provision_license(
           email: customer_email, family: family, product_skus: product_skus, origin: 'stripe',
@@ -141,18 +145,10 @@ module StripeHandler
       
       if result.cmd_tuples.zero?
         puts "[STRIPE] Aviso: Recebido cancelamento para assinatura #{subscription_id}, mas ela não foi encontrada no banco de dados."
-        SmartManiaaApp.log_event(
-          level: 'warning',
-          source: 'stripe_webhook',
-          message: "Recebido evento de cancelamento para assinatura não encontrada no BD: #{subscription_id}"
-        )
+        SmartManiaaApp.log_event(level: 'warning', source: 'stripe_webhook', message: "Recebido evento de cancelamento para assinatura não encontrada no BD: #{subscription_id}")
       else
         puts "[STRIPE] Ação: Assinatura #{subscription_id} cancelada."
-        SmartManiaaApp.log_event(
-          level: 'info',
-          source: 'stripe_webhook',
-          message: "Assinatura cancelada com sucesso no BD: #{subscription_id}"
-        )
+        SmartManiaaApp.log_event(level: 'info', source: 'stripe_webhook', message: "Assinatura cancelada com sucesso no BD: #{subscription_id}")
       end
       
       return [200, {}, ['Cancelamento processado']]
@@ -181,4 +177,5 @@ module StripeHandler
       return [200, {}, ['Evento não tratado']]
     end
   end
+  
 end
