@@ -101,12 +101,20 @@ class License
     [license_id, key, was_new_license]
   end
 
-  def self.update_entitlement_from_stripe(subscription_id:, new_expires_at:, new_status: 'active')
-    $db.exec_params("UPDATE license_entitlements SET expires_at = $1, status = $2 WHERE platform_subscription_id = $3", [new_expires_at, new_status, subscription_id])
-  end
-
-  def self.update_entitlement_status_from_stripe(subscription_id:, status:)
-    $db.exec_params("UPDATE license_entitlements SET status = $1 WHERE platform_subscription_id = $2", [status, subscription_id])
+  def self.update_entitlement_from_stripe(subscription_id:, new_status:, new_expires_at: nil)
+    if new_expires_at
+      # Se uma nova data de expiração for fornecida, atualiza ambos
+      $db.exec_params(
+        "UPDATE license_entitlements SET status = $1, expires_at = $2 WHERE platform_subscription_id = $3", 
+        [new_status, new_expires_at, subscription_id]
+      )
+    else
+      # Se não, atualiza apenas o status
+      $db.exec_params(
+        "UPDATE license_entitlements SET status = $1 WHERE platform_subscription_id = $2", 
+        [new_status, subscription_id]
+      )
+    end
   end
   
   def self.unlink_mac(license_id)
@@ -160,18 +168,18 @@ class License
     all_skus.uniq
   end
 
-  # --- MÉTODO DE SUMÁRIO ATUALIZADO (COM EMAIL_STATUS) ---
+  # --- MÉTODO DE SUMÁRIO ATUALIZADO (INCLUI PENDING_CANCELLATION) ---
   def self.all_with_summary
     $db.exec(%q{
       SELECT
         licenses.*,
         licenses.email_status,
         COALESCE(
-          -- 1. Procura por um status 'Ativo' (pago, origem diferente de trial).
+          -- 1. Procura por um status 'Ativo' ou 'Pendente Cancelamento' (pago, origem diferente de trial).
           (SELECT 'Ativo' FROM license_entitlements le
-           WHERE le.license_id = licenses.id AND le.status = 'active' AND le.origin != 'trial' LIMIT 1),
+           WHERE le.license_id = licenses.id AND le.status IN ('active', 'pending_cancellation') AND le.origin != 'trial' LIMIT 1),
            
-          -- 2. Se não for pago, procura por um 'Trial' ainda válido, baseado na ORIGEM.
+          -- 2. Se não for pago, procura por um 'Trial' ainda válido.
           (SELECT 'Trial' FROM license_entitlements le
            WHERE le.license_id = licenses.id AND le.origin = 'trial' AND le.status = 'active'
            AND (le.trial_expires_at > NOW()) LIMIT 1),
@@ -183,7 +191,7 @@ class License
         -- A lista de origens (mostra todas as que estão ativas).
         (SELECT string_agg(DISTINCT le.origin, ', ')
          FROM license_entitlements le
-         WHERE le.license_id = licenses.id AND le.status = 'active') AS summary_origins
+         WHERE le.license_id = licenses.id AND le.status IN ('active', 'pending_cancellation')) AS summary_origins
       FROM
         licenses
       ORDER BY

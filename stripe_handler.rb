@@ -157,17 +157,26 @@ module StripeHandler
       subscription_data = event['data']['object']
       subscription_id = subscription_data['id']
       
-      if subscription_data['cancel_at_period_end'] == true || !subscription_data['cancel_at'].nil?
-        puts "[STRIPE] Ação: Cancelamento agendado detectado para a assinatura #{subscription_id}."
-        License.update_entitlement_status_from_stripe(subscription_id: subscription_id, status: 'pending_cancellation')
+      # CENÁRIO 1: Cancelamento agendado
+      if !subscription_data['cancel_at'].nil?
+        # Cancelamento em data específica: atualiza status E data de expiração
+        puts "[STRIPE] Ação: Cancelamento agendado para data específica detectado para a assinatura #{subscription_id}."
+        cancel_date = Time.at(subscription_data['cancel_at'])
+        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'pending_cancellation', new_expires_at: cancel_date)
       
+      elsif subscription_data['cancel_at_period_end'] == true
+        # Cancelamento no fim do período: atualiza SÓ o status
+        puts "[STRIPE] Ação: Cancelamento agendado para o fim do período detectado para a assinatura #{subscription_id}."
+        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'pending_cancellation')
+
+      # CENÁRIO 2: Reativação de uma assinatura
       elsif subscription_data['cancel_at_period_end'] == false && subscription_data['cancel_at'].nil?
         puts "[STRIPE] Ação: Reativação de assinatura detectada para #{subscription_id}."
-        $db.exec_params(
-          "UPDATE license_entitlements SET status = 'active' WHERE platform_subscription_id = $1 AND status = 'pending_cancellation'",
-          [subscription_id]
-        )
+        # Busca a data de expiração original do período da assinatura
+        new_expires_at = Time.at(subscription_data['current_period_end'])
+        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active', new_expires_at: new_expires_at)
       else
+        # CENÁRIO 3: Outro tipo de atualização
         puts "[STRIPE] Info: Assinatura #{subscription_id} foi atualizada (sem alteração no status de cancelamento)."
       end
       return [200, {}, ['Atualização de assinatura processada']]
