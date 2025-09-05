@@ -92,13 +92,24 @@ module StripeHandler
         end
         family = License.find_family_by_sku(product_skus.first)
 
+        # --- CORREÇÃO FINAL APLICADA AQUI ---
+        # Buscando a data de validade no local correto e consistente, como você sugeriu.
+        period_end_timestamp = subscription_data['items']['data'][0]['current_period_end']
+        
+        if period_end_timestamp.nil?
+            puts "‼️ ERRO CRÍTICO: 'items.data[0].current_period_end' está nulo para a assinatura #{subscription_id}. Impossível provisionar."
+            SmartManiaaApp.log_event(level: 'error', source: 'stripe_webhook', message: "Campo 'items.data[0].current_period_end' nulo no evento 'customer.subscription.created' para a subscrição #{subscription_id}", details: event)
+            return [500, {}, ['Dados da assinatura incompletos do Stripe']]
+        end
+        expires_at = Time.at(period_end_timestamp)
+        
         License.provision_license(
           email: customer_email, family: family, product_skus: product_skus, origin: 'stripe',
-          grant_source: "stripe_sub:#{subscription_id}", status: 'active', expires_at: nil,
+          grant_source: "stripe_sub:#{subscription_id}", status: 'active', expires_at: expires_at,
           trial_expires_at: nil, platform_subscription_id: subscription_id,
           locale: customer_locale, stripe_customer_id: customer_id, phone: customer_phone
         )
-        puts "[STRIPE] Sucesso: Direito de uso preliminar provisionado para '#{customer_email}'. Aguardando fatura para definir validade."
+        puts "[STRIPE] Sucesso: Direito de uso provisionado para '#{customer_email}' com validade até #{expires_at}."
       rescue => e
         puts "‼️ ERRO inesperado ao processar customer.subscription.created: #{e.class} - #{e.message}\n#{e.backtrace.join("\n")}"
         return [500, {}, ['Erro interno ao provisionar direito de uso']]
@@ -108,48 +119,34 @@ module StripeHandler
     when 'invoice.payment_succeeded'
       invoice_data = event['data']['object']
       subscription_id = invoice_data['subscription']
-
-      if subscription_id
-        period_end_timestamp = invoice_data['period_end']
-
-        if period_end_timestamp.nil?
-          puts "‼️ AVISO: 'period_end' está nulo na fatura #{invoice_data['id']} para a assinatura #{subscription_id}. A validade não será atualizada por este evento."
-          return [200, {}, ['Fatura processada, mas sem data de expiração para atualizar.']]
-        end
-
-        new_expires_at = Time.at(period_end_timestamp)
-        
+      if subscription_id && invoice_data['amount_paid'] > 0
+        new_expires_at = Time.at(invoice_data['period_end'])
         License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active', new_expires_at: new_expires_at)
-        
-        puts "[STRIPE] Sucesso: Assinatura #{subscription_id} atualizada com data de expiração via fatura."
+        puts "[STRIPE] Sucesso: Renovação processada para Assinatura #{subscription_id}."
+      else
+        puts "[STRIPE] Info: Fatura de valor zero ('invoice.payment_succeeded') ignorada (início de assinatura)."
       end
-      return [200, {}, ['Fatura processada']]
+      return [200, {}, ['Renovação processada']]
       
     when 'customer.subscription.deleted'
       subscription = event['data']['object']
       subscription_id = subscription['id']
-      
-      result = $db.exec_params("UPDATE license_entitlements SET status = 'revoked' WHERE platform_subscription_id = $1", [subscription_id])
-      
+      result = License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'revoked')
       if result.cmd_tuples.zero?
         SmartManiaaApp.log_event(level: 'warning', source: 'stripe_webhook', message: "Recebido evento de cancelamento para assinatura não encontrada no BD: #{subscription_id}")
       else
         SmartManiaaApp.log_event(level: 'info', source: 'stripe_webhook', message: "Assinatura cancelada com sucesso no BD: #{subscription_id}")
       end
-      
       return [200, {}, ['Cancelamento processado']]
 
     when 'customer.subscription.updated'
       subscription_data = event['data']['object']
       subscription_id = subscription_data['id']
-      
       if !subscription_data['cancel_at'].nil?
         cancel_date = Time.at(subscription_data['cancel_at'])
         License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'pending_cancellation', new_expires_at: cancel_date)
-      
       elsif subscription_data['cancel_at_period_end'] == true
         License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'pending_cancellation')
-
       elsif subscription_data['cancel_at_period_end'] == false && subscription_data['cancel_at'].nil?
         new_expires_at = Time.at(subscription_data['current_period_end'])
         License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active', new_expires_at: new_expires_at)
