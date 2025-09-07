@@ -53,7 +53,6 @@ module StripeHandler
       locale = (customer_data['preferred_locales'] || []).first
       name = customer_data['name']
       phone = customer_data['phone']
-
       $db.exec_params(
         "INSERT INTO stripe_customers (stripe_customer_id, email, locale, name, phone) VALUES ($1, $2, $3, $4, $5) " +
         "ON CONFLICT (stripe_customer_id) DO UPDATE SET email = $2, locale = $3, name = $4, phone = $5, updated_at = NOW()",
@@ -66,17 +65,14 @@ module StripeHandler
       subscription_data = event['data']['object']
       subscription_id = subscription_data['id']
       customer_id = subscription_data['customer']
-
       existing_entitlement = $db.exec_params("SELECT 1 FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id])
       if existing_entitlement.num_tuples > 0
         puts "[STRIPE] Ignorando 'customer.subscription.created' pois já foi processada."
         return [200, {}, ['Assinatura já processada']]
       end
-      
       begin
         customer_info = $db.exec_params("SELECT email, locale, phone FROM stripe_customers WHERE stripe_customer_id = $1 LIMIT 1", [customer_id]).first
         customer_email, customer_locale, customer_phone = nil, nil, nil
-
         unless customer_info
           puts "‼️ AVISO: Cliente #{customer_id} não encontrado no banco local. Fazendo fallback para a API."
           customer_details = Stripe::Customer.retrieve(customer_id)
@@ -85,24 +81,18 @@ module StripeHandler
           puts "[STRIPE] Informações do cliente obtidas do banco local."
           customer_email, customer_locale, customer_phone = customer_info.values_at('email', 'locale', 'phone')
         end
-
         product_skus = subscription_data['items']['data'].flat_map { |item| stripe_price_to_sku_mapping[item['price']['id']] }.compact.uniq
         if product_skus.empty?
           return [400, {}, ['Nenhum SKU válido encontrado']]
         end
         family = License.find_family_by_sku(product_skus.first)
-
-        # --- CORREÇÃO FINAL APLICADA AQUI ---
-        # Buscando a data de validade no local correto e consistente, como você sugeriu.
         period_end_timestamp = subscription_data['items']['data'][0]['current_period_end']
-        
         if period_end_timestamp.nil?
             puts "‼️ ERRO CRÍTICO: 'items.data[0].current_period_end' está nulo para a assinatura #{subscription_id}. Impossível provisionar."
             SmartManiaaApp.log_event(level: 'error', source: 'stripe_webhook', message: "Campo 'items.data[0].current_period_end' nulo no evento 'customer.subscription.created' para a subscrição #{subscription_id}", details: event)
             return [500, {}, ['Dados da assinatura incompletos do Stripe']]
         end
         expires_at = Time.at(period_end_timestamp)
-        
         License.provision_license(
           email: customer_email, family: family, product_skus: product_skus, origin: 'stripe',
           grant_source: "stripe_sub:#{subscription_id}", status: 'active', expires_at: expires_at,
@@ -116,17 +106,44 @@ module StripeHandler
       end
       return [200, {}, ['Direito de uso provisionado com sucesso']]
 
-    when 'invoice.payment_succeeded'
+    when 'customer.subscription.updated'
+      subscription_data = event['data']['object']
+      subscription_id = subscription_data['id']
+      previous_attributes = event['data']['previous_attributes']
+
+      if !subscription_data['cancel_at'].nil?
+        cancel_date = Time.at(subscription_data['cancel_at'])
+        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'pending_cancellation', new_expires_at: cancel_date)
+        puts "[STRIPE] Ação: Cancelamento para data específica processado para #{subscription_id}."
+      elsif subscription_data['cancel_at_period_end'] == true
+        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'pending_cancellation')
+        puts "[STRIPE] Ação: Cancelamento no fim do período processado para #{subscription_id}."
+      
+      elsif subscription_data['cancel_at_period_end'] == false && subscription_data['cancel_at'].nil? && previous_attributes && (previous_attributes['cancel_at_period_end'] == true || !previous_attributes['cancel_at'].nil?)
+        new_expires_at = Time.at(subscription_data['items']['data'][0]['current_period_end'])
+        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active', new_expires_at: new_expires_at)
+        puts "[STRIPE] Ação: Reativação de assinatura processada para #{subscription_id}."
+
+      elsif previous_attributes && previous_attributes.dig('items', 'data', 0, 'current_period_end')
+        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'awaiting_payment')
+        puts "[STRIPE] Ação: Renovação detectada para #{subscription_id}. Status alterado para 'awaiting_payment'."
+      else
+        puts "[STRIPE] Info: Evento 'customer.subscription.updated' não resultou em ação (sem mudança relevante)."
+      end
+      return [200, {}, ['Atualização de assinatura processada']]
+
+    when 'invoice.paid', 'invoice.payment_succeeded'
       invoice_data = event['data']['object']
       subscription_id = invoice_data['subscription']
-      if subscription_id && invoice_data['amount_paid'] > 0
+      
+      if subscription_id && invoice_data['billing_reason'] == 'subscription_cycle'
         new_expires_at = Time.at(invoice_data['period_end'])
         License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active', new_expires_at: new_expires_at)
-        puts "[STRIPE] Sucesso: Renovação processada para Assinatura #{subscription_id}."
+        puts "[STRIPE] Sucesso: RENOVAÇÃO CONFIRMADA para Assinatura #{subscription_id}."
       else
-        puts "[STRIPE] Info: Fatura de valor zero ('invoice.payment_succeeded') ignorada (início de assinatura)."
+        puts "[STRIPE] Info: Evento de pagamento ignorado (motivo: #{invoice_data['billing_reason'] || 'não é de um ciclo de assinatura'})."
       end
-      return [200, {}, ['Renovação processada']]
+      return [200, {}, ['Evento de pagamento processado']]
       
     when 'customer.subscription.deleted'
       subscription = event['data']['object']
@@ -138,20 +155,6 @@ module StripeHandler
         SmartManiaaApp.log_event(level: 'info', source: 'stripe_webhook', message: "Assinatura cancelada com sucesso no BD: #{subscription_id}")
       end
       return [200, {}, ['Cancelamento processado']]
-
-    when 'customer.subscription.updated'
-      subscription_data = event['data']['object']
-      subscription_id = subscription_data['id']
-      if !subscription_data['cancel_at'].nil?
-        cancel_date = Time.at(subscription_data['cancel_at'])
-        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'pending_cancellation', new_expires_at: cancel_date)
-      elsif subscription_data['cancel_at_period_end'] == true
-        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'pending_cancellation')
-      elsif subscription_data['cancel_at_period_end'] == false && subscription_data['cancel_at'].nil?
-        new_expires_at = Time.at(subscription_data['current_period_end'])
-        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active', new_expires_at: new_expires_at)
-      end
-      return [200, {}, ['Atualização de assinatura processada']]
 
     else
       puts "[STRIPE] Info: Evento não tratado recebido: #{event_type}."

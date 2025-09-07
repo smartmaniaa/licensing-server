@@ -168,30 +168,27 @@ class License
     all_skus.uniq
   end
 
-  # --- MÉTODO DE SUMÁRIO ATUALIZADO (INCLUI PENDING_CANCELLATION) ---
+  # --- MÉTODO DE SUMÁRIO ATUALIZADO (INCLUI AWAITING_PAYMENT COMO ATIVO) ---
   def self.all_with_summary
     $db.exec(%q{
       SELECT
         licenses.*,
         licenses.email_status,
         COALESCE(
-          -- 1. Procura por um status 'Ativo' ou 'Pendente Cancelamento' (pago, origem diferente de trial).
+          -- Considera 'active', 'pending_cancellation', e 'awaiting_payment' como ATIVO na visão geral
           (SELECT 'Ativo' FROM license_entitlements le
-           WHERE le.license_id = licenses.id AND le.status IN ('active', 'pending_cancellation') AND le.origin != 'trial' LIMIT 1),
+           WHERE le.license_id = licenses.id AND le.status IN ('active', 'pending_cancellation', 'awaiting_payment') AND le.origin != 'trial' LIMIT 1),
            
-          -- 2. Se não for pago, procura por um 'Trial' ainda válido.
           (SELECT 'Trial' FROM license_entitlements le
            WHERE le.license_id = licenses.id AND le.origin = 'trial' AND le.status = 'active'
            AND (le.trial_expires_at > NOW()) LIMIT 1),
            
-          -- 3. Se não encontrar nenhum dos dois, a licença é 'Inativo'.
           'Inativo'
         ) AS summary_status,
         
-        -- A lista de origens (mostra todas as que estão ativas).
         (SELECT string_agg(DISTINCT le.origin, ', ')
          FROM license_entitlements le
-         WHERE le.license_id = licenses.id AND le.status IN ('active', 'pending_cancellation')) AS summary_origins
+         WHERE le.license_id = licenses.id AND le.status IN ('active', 'pending_cancellation', 'awaiting_payment')) AS summary_origins
       FROM
         licenses
       ORDER BY
