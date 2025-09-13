@@ -168,20 +168,28 @@ class License
     all_skus.uniq
   end
 
-  # --- MÉTODO DE SUMÁRIO ATUALIZADO (INCLUI AWAITING_PAYMENT COMO ATIVO) ---
+  # --- MÉTODO DE SUMÁRIO FINAL E CORRIGIDO (VERIFICA A DATA DE EXPIRAÇÃO) ---
   def self.all_with_summary
     $db.exec(%q{
       SELECT
         licenses.*,
         licenses.email_status,
         COALESCE(
-          -- Considera 'active', 'pending_cancellation', e 'awaiting_payment' como ATIVO na visão geral
+          -- Para ser 'Ativo', o status deve ser válido E a data de expiração não pode ter passado.
           (SELECT 'Ativo' FROM license_entitlements le
-           WHERE le.license_id = licenses.id AND le.status IN ('active', 'pending_cancellation', 'awaiting_payment') AND le.origin != 'trial' LIMIT 1),
+           WHERE le.license_id = licenses.id 
+             AND le.status IN ('active', 'pending_cancellation', 'awaiting_payment') 
+             AND le.origin != 'trial' 
+             AND (le.expires_at > NOW() OR le.expires_at IS NULL)
+           LIMIT 1),
            
+          -- Para ser 'Trial', o status deve ser 'active' E a data de expiração do trial não pode ter passado.
           (SELECT 'Trial' FROM license_entitlements le
-           WHERE le.license_id = licenses.id AND le.origin = 'trial' AND le.status = 'active'
-           AND (le.trial_expires_at > NOW()) LIMIT 1),
+           WHERE le.license_id = licenses.id 
+             AND le.origin = 'trial' 
+             AND le.status = 'active'
+             AND (le.trial_expires_at > NOW()) 
+           LIMIT 1),
            
           'Inativo'
         ) AS summary_status,
