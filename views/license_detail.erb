@@ -42,6 +42,9 @@
     .status-trial { color: #2980b9; font-weight: bold; }
     .status-revoked { color: #c0392b; font-weight: bold; }
     .status-pending_cancellation { color: #f39c12; font-weight: bold; }
+    .status-expired { color: #7f8c8d; font-weight: bold; }
+    .status-awaiting_payment { color: #8e44ad; font-weight: bold; }
+
 
     /* Estilos para o Modal (Popup) */
     .modal-overlay { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); }
@@ -131,11 +134,25 @@
             <tr><td colspan="6" style="text-align: center;">Nenhum direito de uso encontrado.</td></tr>
           <% else %>
             <% @entitlements.each do |entitlement| %>
+              <%
+                # --- LÓGICA FINAL E CORRIGIDA ---
+                is_expired = false
+                # Verifica a data de expiração do trial
+                if entitlement['trial_expires_at'] && Time.parse(entitlement['trial_expires_at']) < Time.now
+                  is_expired = true
+                # Verifica a data de expiração de licenças pagas
+                elsif entitlement['expires_at'] && Time.parse(entitlement['expires_at']) < Time.now
+                  is_expired = true
+                end
+                
+                # Define o status e a classe CSS para exibição
+                display_status = is_expired ? 'Vencida' : entitlement['status'].capitalize.gsub('_', ' ')
+                status_class = is_expired ? 'expired' : entitlement['status']
+              %>
               <tr>
                 <td><%= entitlement['product_name'] %></td>
-                <td><span class="status-<%= entitlement['status'] %>"><%= entitlement['status'].capitalize.gsub('_', ' ') %></span></td>
+                <td><span class="status-<%= status_class %>"><%= display_status %></span></td>
                 <td><%= entitlement['origin'] %></td>
-                
                 <td>
                   <% if entitlement['trial_expires_at'] %>
                     Trial até <%= Time.parse(entitlement['trial_expires_at']).strftime('%d/%m/%Y %H:%M') %>
@@ -164,6 +181,7 @@
   </div>
 
   <div id="phoneModal" class="modal-overlay">
+    <% if @license %>
     <div class="modal-content">
       <span class="modal-close">&times;</span>
       <h2>Adicionar / Editar Telefone</h2>
@@ -188,6 +206,7 @@
         <button type="submit" class="btn-action save">Salvar Telefone</button>
       </form>
     </div>
+    <% end %>
   </div>
 
   <script>
