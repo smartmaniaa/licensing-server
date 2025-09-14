@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Gerenciar Origens de Licença - SmartManiaa</title>
+  <style>
+    /* Estilos da página */
+    body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; margin:2em; background:#f4f6f8; color:#333;}
+    .container { max-width: 800px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
+    h1, h2 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+    .back-link { display: inline-block; margin-bottom: 2em; color: #3498db; text-decoration: none; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1em; }
+    th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd;}
+    th { background-color: #3498db; color: white;}
+    .form-group { margin-bottom: 1.5em; }
+    label { display: block; margin-bottom: 0.5em; font-weight: bold; }
+    input[type="text"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+    button { background-color: #28a745; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; font-size: 14px; }
+    .btn-delete { background-color: #e74c3c; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="/admin" class="back-link">&larr; Voltar ao Painel Principal</a>
+    <h1>Gerenciar Origens de Licença Manual</h1>
+
+    <h2>Adicionar Nova Origem</h2>
+    <form action="/admin/origins" method="post">
+      <div class="form-group">
+        <label for="display_name">Nome de Exibição (Ex: Influenciador)</label>
+        <input type="text" id="display_name" name="display_name" required>
+      </div>
+      <div class="form-group">
+        <label for="origin_key">Chave da Origem (Ex: influencer) - (minúsculo, sem espaços)</label>
+        <input type="text" id="origin_key" name="origin_key" required pattern="[a-z0-9_]+">
+      </div>
+      <button type="submit">Adicionar Origem</button>
+    </form>
+
+    <h2 style="margin-top: 2em;">Origens Existentes</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Nome de Exibição</th>
+          <th>Chave</th>
+          <th style="width: 100px;">Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% @origins.each do |origin| %>
+          <tr>
+            <td><%= origin['display_name'] %></td>
+            <td><code><%= origin['origin_key'] %></code></td>
+            <td>
+              <form action="/admin/origins/<%= origin['id'] %>/delete" method="post" onsubmit="return confirm('Tem certeza?');">
+                <button type="submit" class="btn-delete">Deletar</button>
+              </form>
+            </td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

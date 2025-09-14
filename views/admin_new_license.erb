@@ -13,7 +13,25 @@
     input[type="email"], input[type="tel"], input[type="date"], input[type="text"], select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
     .checkbox-group { display: flex; flex-wrap: wrap; gap: 10px 24px; }
     button { background-color: #28a745; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; }
-    .back-link { display: inline-block; margin-bottom: 2em; color: #3498db; text-decoration: none; }
+    
+    /* --- ESTILOS ADICIONADOS --- */
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2em;
+    }
+    .back-link { color: #3498db; text-decoration: none; }
+    .btn-manage {
+      background-color: #7f8c8d;
+      color: white;
+      padding: 8px 14px;
+      text-decoration: none;
+      border-radius: 5px;
+      font-size: 14px;
+    }
+    /* --- FIM DOS ESTILOS ADICIONADOS --- */
+    
     .phone-input-group { display: flex; gap: 10px; }
     .phone-input-group select { width: 150px; }
     .phone-input-group input[type="tel"] { flex-grow: 1; }
@@ -22,7 +40,6 @@
 
   <script>
     document.addEventListener('DOMContentLoaded', function() {
-      // Script para popular produtos por família
       const productsByFamily = JSON.parse('<%= @products_by_family %>');
       const familySelector = document.getElementById('family_selector');
       const productsContainer = document.getElementById('products_container');
@@ -44,18 +61,15 @@
         }
       });
       
-      // Script para o campo de telefone
       const countrySelector = document.getElementById('country_code_selector');
       const otherCodeWrapper = document.getElementById('other_country_code_wrapper');
       
-      // Garante que o campo manual comece escondido
       otherCodeWrapper.style.display = 'none';
-
       countrySelector.addEventListener('change', function() {
-        if (this.value === "") { // Se a opção "Outro" for selecionada
-          otherCodeWrapper.style.display = 'block'; // Mostra o campo de texto
+        if (this.value === "") {
+          otherCodeWrapper.style.display = 'block';
         } else {
-          otherCodeWrapper.style.display = 'none'; // Esconde o campo de texto
+          otherCodeWrapper.style.display = 'none';
         }
       });
     });
@@ -63,7 +77,11 @@
 </head>
 <body>
   <div class="container">
-    <a href="/admin" class="back-link">&larr; Voltar para a lista</a>
+    <div class="page-header">
+      <a href="/admin" class="back-link">&larr; Voltar para a lista</a>
+      <a href="/admin/origins" class="btn-manage">Gerenciar Origens</a>
+    </div>
+
     <h1>Criar Nova Licença Manualmente</h1>
     
     <form action="/admin/create" method="post" autocomplete="off">
@@ -111,10 +129,9 @@
       <div class="form-group">
         <label for="origin">Origem da Licença</label>
         <select id="origin" name="origin">
-          <option value="manual">Manual</option>
-          <option value="beta">Beta Tester</option>
-          <option value="youtuber">Youtuber/Parceiro</option>
-          <option value="suporte">Suporte</option>
+          <% @origins.each do |origin| %>
+            <option value="<%= origin['origin_key'] %>"><%= origin['display_name'] %></option>
+          <% end %>
         </select>
       </div>
 

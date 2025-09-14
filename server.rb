@@ -360,12 +360,14 @@ class SmartManiaaApp < Sinatra::Base
 
   # --- ROTAS DE GERENCIAMENTO DE LICENÇAS ---
   get '/admin/new' do
-    protected!
-    all_products = Product.all
-    @families = all_products.map { |p| p['family'] }.uniq.sort 
-    @products_by_family = all_products.group_by { |p| p['family'] }.to_json
-    erb :admin_new_license
-  end
+  protected!
+  all_products = Product.all
+  @families = all_products.map { |p| p['family'] }.uniq.sort 
+  @products_by_family = all_products.group_by { |p| p['family'] }.to_json
+  # LINHA ADICIONADA:
+  @origins = $db.exec("SELECT * FROM manual_license_origins ORDER BY display_name")
+  erb :admin_new_license
+end
 
   post '/admin/create' do
     protected!
@@ -604,6 +606,28 @@ end
       end
     end
   end
+
+  # --- ROTAS DE GERENCIAMENTO DE ORIGENS ---
+
+get '/admin/origins' do
+  protected!
+  @origins = $db.exec("SELECT * FROM manual_license_origins ORDER BY display_name")
+  erb :admin_manage_origins
+end
+
+post '/admin/origins' do
+  protected!
+  key = params['origin_key'].downcase.strip
+  display_name = params['display_name'].strip
+  $db.exec_params("INSERT INTO manual_license_origins (origin_key, display_name) VALUES ($1, $2)", [key, display_name])
+  redirect '/admin/origins'
+end
+
+post '/admin/origins/:id/delete' do
+  protected!
+  $db.exec_params("DELETE FROM manual_license_origins WHERE id = $1", [params['id']])
+  redirect '/admin/origins'
+end
 
   post '/webhook/sendgrid_events' do
     # Bloco de segurança que precisa ser reativado
