@@ -6,12 +6,14 @@
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 2em; background-color: #f4f6f8; color: #333; }
     .container { max-width: 800px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
-    h1, h2, h4 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
-    h4 { border-bottom: 1px solid #ccc; }
+    h1, h2, h4 { color: #2c3e50; }
+    h1 { border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+    h2, h4 { border-bottom: 1px solid #ccc; padding-bottom: 8px; margin-top: 2em;}
     .form-group { margin-bottom: 1.5em; }
     label { display: block; margin-bottom: 0.5em; font-weight: bold; }
     input[type="text"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
     input[readonly] { background-color: #e9ecef; cursor: not-allowed; }
+    .checkbox-group { display: flex; flex-direction: column; gap: 8px; }
     .checkbox-group label { font-weight: normal; }
     button { background-color: #28a745; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; }
     button:hover { opacity: 0.9; }
@@ -26,9 +28,7 @@
     <h1>Editar Produto: <%= @product['name'] %></h1>
 
     <% if @error %>
-      <div class="error-box">
-        <%= @error %>
-      </div>
+      <div class="error-box"><%= @error %></div>
     <% end %>
 
     <form action="/admin/product/<%= @product['sku'] %>" method="post">
@@ -45,8 +45,11 @@
         <label for="family">Família do Produto</label>
         <input type="text" id="family" name="family" value="<%= @product['family'] %>" required>
       </div>
+      <div class="form-group">
+        <label for="latest_version">Última Versão</label>
+        <input type="text" id="latest_version" name="latest_version" value="<%= @product['latest_version'] %>">
+      </div>
 
-      <hr style="margin: 2em 0;">
       <h4>Informações da Plataforma (Stripe)</h4>
       <div class="form-group">
         <label for="platform_id">ID de Preço do Stripe</label>

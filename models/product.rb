@@ -10,11 +10,11 @@ class Product
     result.num_tuples > 0 ? result[0] : nil
   end
 
-  def self.create(sku:, name:, family:)
+  def self.create(sku:, name:, family:, latest_version:)
     begin
       $db.exec_params(
-        'INSERT INTO products (sku, name, family) VALUES ($1, $2, $3)',
-        [sku, name, family]
+        'INSERT INTO products (sku, name, family, latest_version) VALUES ($1, $2, $3, $4)',
+        [sku, name, family, latest_version]
       )
       return true
     rescue PG::UniqueViolation => e
@@ -23,11 +23,11 @@ class Product
     end
   end
 
-  def self.update(sku:, name:, family:)
+  def self.update(sku:, name:, family:, latest_version:)
     begin
       $db.exec_params(
-        'UPDATE products SET name = $1, family = $2 WHERE sku = $3',
-        [name, family, sku]
+        'UPDATE products SET name = $1, family = $2, latest_version = $3 WHERE sku = $4',
+        [name, family, latest_version, sku]
       )
       return true
     rescue PG::UniqueViolation => e

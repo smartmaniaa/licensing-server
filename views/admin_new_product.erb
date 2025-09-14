@@ -6,7 +6,9 @@
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 2em; background-color: #f4f6f8; color: #333; }
     .container { max-width: 800px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
-    h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+    h1, h4 { color: #2c3e50; }
+    h1 { border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+    h4 { border-bottom: 1px solid #ccc; padding-bottom: 8px; }
     .form-group { margin-bottom: 1.5em; }
     label { display: block; margin-bottom: 0.5em; font-weight: bold; }
     input[type="text"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
@@ -23,9 +25,7 @@
     <h1>Adicionar Novo Produto</h1>
 
     <% if @error %>
-      <div class="error-box">
-        <%= @error %>
-      </div>
+      <div class="error-box"><%= @error %></div>
     <% end %>
 
     <form action="/admin/products" method="post">
@@ -33,20 +33,31 @@
         <label for="sku">SKU do Produto (ID Interno Único, ex: smartgrid_axis)</label>
         <input type="text" id="sku" name="sku" required>
       </div>
+      
       <div class="form-group">
         <label for="name">Nome do Produto (Ex: SmartGrid Axis)</label>
         <input type="text" id="name" name="name" required>
       </div>
+
       <div class="form-group">
         <label for="family">Família (Ex: smartgrid, smartfield)</label>
         <input type="text" id="family" name="family" required>
       </div>
-      <hr style="margin: 2em 0;">
-      <h4>Informações da Plataforma (Stripe)</h4>
+      
       <div class="form-group">
-        <label for="platform_id">ID de Preço do Stripe (Ex: price_test_...)</label>
-        <input type="text" id="platform_id" name="platform_id" required>
+        <label for="latest_version">Versão Inicial (Ex: 1.0.0)</label>
+        <input type="text" id="latest_version" name="latest_version">
       </div>
+
+      <hr style="margin: 2em 0;">
+      
+      <h4>Informações da Plataforma (Stripe)</h4>
+
+      <div class="form-group">
+        <label for="platform_id">ID de Preço do Stripe (Ex: price_...)</label>
+        <input type="text" id="platform_id" name="platform_id">
+      </div>
+
       <div class="form-group">
         <label for="purchase_link">Link de Compra (Ex: https://buy.stripe.com/...)</label>
         <input type="text" id="purchase_link" name="purchase_link">

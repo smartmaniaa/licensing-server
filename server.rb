@@ -175,10 +175,10 @@ class SmartManiaaApp < Sinatra::Base
     key = params['license_key']
     mac = params['mac_address']
     sku = params['product_sku']
+    client_version = params['product_version'] # <-- NOVO PARÂMETRO ESPERADO
 
     license_result = $db.exec_params("SELECT * FROM licenses WHERE license_key = $1 LIMIT 1", [key])
     if license_result.num_tuples.zero?
-      puts "[VALIDATE] Falha: Chave '#{key}' não encontrada."
       return { status: 'invalid', message: 'Chave de licença não encontrada.' }.to_json
     end
     license = license_result.first
@@ -186,7 +186,7 @@ class SmartManiaaApp < Sinatra::Base
     entitlement_result = $db.exec_params(
       %Q{
         SELECT * FROM license_entitlements
-        WHERE license_id = $1 AND product_sku = $2 AND status = 'active'
+        WHERE license_id = $1 AND product_sku = $2 AND status IN ('active', 'pending_cancellation', 'awaiting_payment')
         AND (
           (origin != 'trial' AND (expires_at > NOW() OR expires_at IS NULL)) OR
           (origin = 'trial' AND trial_expires_at > NOW())
@@ -197,20 +197,39 @@ class SmartManiaaApp < Sinatra::Base
     )
 
     if entitlement_result.num_tuples.zero?
-      puts "[VALIDATE] Falha: Chave '#{key}' para produto '#{sku}'. Motivo: Sem direito de uso ativo."
       return { status: 'invalid', message: "Nenhum direito de uso ativo encontrado para este produto." }.to_json
     end
 
     if license['mac_address'].nil?
       $db.exec_params("UPDATE licenses SET mac_address = $1 WHERE id = $2", [mac, license['id']])
-      puts "[VALIDATE] Info: MAC '#{mac}' vinculado à chave '#{key}' no primeiro uso."
     elsif license['mac_address'] != mac
-      puts "[VALIDATE] Falha: Chave '#{key}' para MAC '#{mac}'. Motivo: Conflito de MAC (DB: #{license['mac_address']})."
       return { status: 'invalid', message: "Chave já vinculada a outro computador." }.to_json
     end
+    
+    # --- NOVA LÓGICA DE VERIFICAÇÃO DE VERSÃO ---
+    product_info = Product.find(sku)
+    family_info = $db.exec_params("SELECT download_page_url FROM product_family_info WHERE family_name = $1", [product_info['family']]).first
+    
+    update_available = false
+    latest_version = product_info['latest_version']
+    
+    if client_version && latest_version && !latest_version.empty? && client_version != latest_version
+      update_available = true
+    end
 
-    puts "[VALIDATE] Sucesso: Chave '#{key}' validada para o produto '#{sku}'."
-    { status: 'valid', message: 'Licença válida.' }.to_json
+    # Monta a resposta final
+    response = {
+      status: 'valid',
+      message: 'Licença válida.',
+      update_available: update_available
+    }
+    
+    if update_available
+      response[:latest_version] = latest_version
+      response[:update_url] = family_info ? family_info['download_page_url'] : nil
+    end
+
+    response.to_json
   end
   
   # --- ROTAS DE TESTE ---
@@ -265,7 +284,10 @@ class SmartManiaaApp < Sinatra::Base
   post '/admin/products' do
     protected!
     success = Product.create(
-      sku: params['sku'], name: params['name'], family: params['family']
+      sku: params['sku'], 
+      name: params['name'], 
+      family: params['family'],
+      latest_version: params['latest_version']
     )
     if success
       new_family = params['family']
@@ -304,7 +326,12 @@ class SmartManiaaApp < Sinatra::Base
   post '/admin/product/:sku' do
     protected!
     product_sku = params['sku']
-    Product.update(sku: product_sku, name: params['name'], family: params['family'])
+    Product.update(
+      sku: product_sku, 
+      name: params['name'], 
+      family: params['family'],
+      latest_version: params['latest_version']
+    )
     Product.save_platform_product(sku: product_sku, platform: 'stripe', platform_id: params['platform_id'], link: params['purchase_link'])
     $db.exec_params("UPDATE products SET stripe_price_id = $1 WHERE sku = $2", [params['platform_id'], product_sku])
     component_skus = params['component_skus'] || []
