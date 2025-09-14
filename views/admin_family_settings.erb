@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <title>Configurações: <%= @family_info['display_name'] %> - SmartManiaa</title>
   <style>
-    /* ... (Estilos sem alteração) ... */
+    /* Estilos da página */
     body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; margin:2em; background:#f4f6f8; color:#333;}
     .container { max-width: 900px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
     h1, h2 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
     h2 { font-size: 1.4em; margin-top: 2em; border-bottom-style: solid; border-bottom-width: 1px; }
     .form-group { margin-bottom: 1.5em; }
     label { display: block; margin-bottom: 0.5em; font-weight: bold; }
-    input[type="text"], input[type="email"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+    input[type="text"], input[type="email"], input[type="number"] { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
     .help-text { font-size: 0.9em; color: #666; margin-top: 5px; }
     .btn-save { background-color: #28a745; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; text-decoration: none; }
     .btn-secondary { background-color: #3498db; }
@@ -55,6 +55,11 @@
           <label for="support_email">E-mail de Suporte</label>
           <input type="email" id="support_email" name="support_email" value="<%= @family_info['support_email'] %>">
           <p class="help-text">E-mail de contato para esta família. Variável: {{family_support_email}}</p>
+        </div>
+        <div class="form-group">
+          <label for="download_page_url">URL da Página de Download</label>
+          <input type="text" id="download_page_url" name="download_page_url" value="<%= @family_info['download_page_url'] %>">
+          <p class="help-text">Link para a página com todos os instaladores desta família. Variável: {{family_download_url}}</p>
         </div>
         <div class="form-group">
           <label for="trial_duration_days">Duração do Trial (em dias)</label>
@@ -133,8 +138,9 @@
 
     // Garante que a primeira aba esteja visível e ativa ao carregar a página
     document.addEventListener("DOMContentLoaded", function() {
-        // Corrige um bug visual para garantir que a aba certa esteja visível
-        document.querySelector('.tab-link.active').click();
+        if(document.querySelector('.tab-link.active')) {
+            document.querySelector('.tab-link.active').click();
+        }
     });
   </script>
 </body>

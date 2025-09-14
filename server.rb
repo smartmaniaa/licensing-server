@@ -517,40 +517,49 @@ class SmartManiaaApp < Sinatra::Base
   end
 
   post '/admin/family/:name' do
-    protected!
-    family_name = params['name']
+  protected!
+  family_name = params['name']
 
+  # Query UPDATE modificada para incluir a nova coluna 'download_page_url'
+  $db.exec_params(
+    "UPDATE product_family_info SET display_name = $1, homepage_url = $2, support_email = $3, sender_name = $4, trial_duration_days = $5, download_page_url = $6 WHERE family_name = $7",
+    [
+      params['display_name'], 
+      params['homepage_url'], 
+      params['support_email'], 
+      params['sender_name'], 
+      params['trial_duration_days'],
+      params['download_page_url'], # Novo parâmetro
+      family_name
+    ]
+  )
+
+  if params['new_notifier_email'] && !params['new_notifier_email'].empty?
     $db.exec_params(
-      "UPDATE product_family_info SET display_name = $1, homepage_url = $2, support_email = $3, sender_name = $4, trial_duration_days = $5 WHERE family_name = $6",
-      [params['display_name'], params['homepage_url'], params['support_email'], params['sender_name'], params['trial_duration_days'], family_name]
+      "INSERT INTO admin_notifiers (email, family_name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+      [params['new_notifier_email'], family_name]
     )
-
-    if params['new_notifier_email'] && !params['new_notifier_email'].empty?
-      $db.exec_params(
-        "INSERT INTO admin_notifiers (email, family_name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-        [params['new_notifier_email'], family_name]
-      )
-    end
-
-    (params['remove_notifiers'] || []).each do |email_to_remove|
-      $db.exec_params("DELETE FROM admin_notifiers WHERE email = $1 AND family_name = $2", [email_to_remove, family_name])
-    end
-
-    template_ids = $db.exec("SELECT id FROM email_templates").map { |row| row['id'] }
-    template_ids.each do |template_id|
-      is_active_from_form = params['rules'] && params['rules'][template_id] == 'on'
-      
-      existing_rule = $db.exec_params("SELECT id FROM email_rules WHERE family_name = $1 AND email_template_id = $2", [family_name, template_id]).first
-
-      if existing_rule
-        $db.exec_params("UPDATE email_rules SET is_active = $1 WHERE id = $2", [is_active_from_form, existing_rule['id']])
-      elsif is_active_from_form
-        $db.exec_params("INSERT INTO email_rules (family_name, email_template_id, is_active) VALUES ($1, $2, true)", [family_name, template_id])
-      end
-    end
-
-    redirect "/admin/family/#{family_name}"
   end
+
+  (params['remove_notifiers'] || []).each do |email_to_remove|
+    $db.exec_params("DELETE FROM admin_notifiers WHERE email = $1 AND family_name = $2", [email_to_remove, family_name])
+  end
+
+  template_ids = $db.exec("SELECT id FROM email_templates").map { |row| row['id'] }
+  template_ids.each do |template_id|
+    is_active_from_form = params['rules'] && params['rules'][template_id] == 'on'
+    
+    existing_rule = $db.exec_params("SELECT id FROM email_rules WHERE family_name = $1 AND email_template_id = $2", [family_name, template_id]).first
+
+    if existing_rule
+      $db.exec_params("UPDATE email_rules SET is_active = $1 WHERE id = $2", [is_active_from_form, existing_rule['id']])
+    elsif is_active_from_form
+      $db.exec_params("INSERT INTO email_rules (family_name, email_template_id, is_active) VALUES ($1, $2, true)", [family_name, template_id])
+    end
+  end
+
+  redirect "/admin/family/#{family_name}"
+end
 
   get '/admin/email_templates/new' do
     protected!
