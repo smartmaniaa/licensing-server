@@ -106,6 +106,7 @@ module StripeHandler
       end
       return [200, {}, ['Direito de uso provisionado com sucesso']]
 
+    # --- LÓGICA DE ATUALIZAÇÃO, RENOVAÇÃO E CANCELAMENTO UNIFICADA ---
     when 'customer.subscription.updated'
       subscription_data = event['data']['object']
       subscription_id = subscription_data['id']
@@ -132,19 +133,34 @@ module StripeHandler
       end
       return [200, {}, ['Atualização de assinatura processada']]
 
+    # --- WEBHOOKS DE PAGAMENTO (RENOVAÇÃO E CRIAÇÃO) ---
     when 'invoice.paid', 'invoice.payment_succeeded'
       invoice_data = event['data']['object']
       subscription_id = invoice_data['subscription']
       
+      # --- CORREÇÃO APLICADA AQUI ---
+      # Agora processa corretamente as renovações
       if subscription_id && invoice_data['billing_reason'] == 'subscription_cycle'
         new_expires_at = Time.at(invoice_data['period_end'])
         License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active', new_expires_at: new_expires_at)
         puts "[STRIPE] Sucesso: RENOVAÇÃO CONFIRMADA para Assinatura #{subscription_id}."
       else
-        puts "[STRIPE] Info: Evento de pagamento ignorado (motivo: #{invoice_data['billing_reason'] || 'não é de um ciclo de assinatura'})."
+        puts "[STRIPE] Info: Evento de pagamento ignorado (motivo: #{invoice_data['billing_reason'] || 'não é um ciclo de assinatura'})."
       end
       return [200, {}, ['Evento de pagamento processado']]
       
+    when 'invoice.payment_failed'
+      invoice_data = event['data']['object']
+      subscription_id = invoice_data['subscription']
+
+      if subscription_id
+          puts "[STRIPE] ALERTA: Falha no pagamento da renovação para a assinatura #{subscription_id}."
+          # Ação: Reverte o status para 'active'. A licença irá expirar na data antiga.
+          License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active')
+          SmartManiaaApp.log_event(level: 'warning', source: 'stripe_webhook', message: "Falha no pagamento da fatura para a assinatura #{subscription_id}", details: event)
+      end
+      return [200, {}, ['Falha de pagamento processada']]
+
     when 'customer.subscription.deleted'
       subscription = event['data']['object']
       subscription_id = subscription['id']
