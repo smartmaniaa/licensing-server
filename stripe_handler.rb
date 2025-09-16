@@ -138,6 +138,39 @@ module StripeHandler
     # --- WEBHOOKS DE PAGAMENTO (RENOVAÇÃO E CRIAÇÃO) ---
     when 'invoice.paid', 'invoice.payment_succeeded'
       invoice_data = event['data']['object']
+      
+      # --- PASSO 1: REGISTRO FINANCEIRO ---
+      # Esta nova linha chama o método que acabamos de criar.
+      # Ele irá registrar TODAS as transações de pagamento, incluindo as de valor zero.
+      record_financial_transaction(invoice_data)
+
+      # --- PASSO 2: LÓGICA DE ATUALIZAÇÃO DA LICENÇA (lógica antiga, agora focada apenas na renovação) ---
+      billing_reason = invoice_data['billing_reason']&.strip
+      
+      if billing_reason == 'subscription_cycle'
+        subscription_id = invoice_data.dig('parent', 'subscription_details', 'subscription')
+        period_end_timestamp = invoice_data.dig('lines', 'data', 0, 'period', 'end')
+        
+        if subscription_id && period_end_timestamp
+          puts "[STRIPE] Processando RENOVAÇÃO para a assinatura: #{subscription_id}."
+          new_expires_at = Time.at(period_end_timestamp)
+          result = License.update_entitlement_from_stripe(
+            subscription_id: subscription_id, 
+            new_status: 'active', 
+            new_expires_at: new_expires_at
+          )
+          if result.cmd_tuples > 0
+            puts "[STRIPE] Sucesso: RENOVAÇÃO CONFIRMADA. Assinatura válida até #{new_expires_at}."
+          else
+            puts "[STRIPE] ALERTA: Renovação processada, mas nenhuma licença foi atualizada."
+          end
+        else
+            puts "[STRIPE] ERRO: 'subscription_id' ou 'period_end' não encontrados no evento de renovação."
+        end
+      end
+      
+      return [200, {}, ['Evento de pagamento processado']]
+      invoice_data = event['data']['object']
       billing_reason = invoice_data['billing_reason']&.strip
       event_id = event['id']
 
@@ -292,6 +325,56 @@ module StripeHandler
       puts "[STRIPE] Info: Evento não tratado recebido: #{event_type}."
       return [200, {}, ['Evento não tratado']]
     end
+  end
+
+  # ---- NOVO MÉTODO PRIVADO PARA REGISTRO FINANCEIRO ----
+  private
+
+  def self.record_financial_transaction(invoice_data)
+    # 1. Extrai os dados essenciais da fatura
+    amount_paid = invoice_data['amount_paid']
+    currency = invoice_data['currency']
+    stripe_invoice_id = invoice_data['id']
+    paid_at = Time.at(invoice_data['status_transitions']['paid_at'])
+    subscription_id = invoice_data.dig('parent', 'subscription_details', 'subscription')
+
+    # Se não houver ID de assinatura, não é uma transação que nos interessa
+    return unless subscription_id
+
+    # 2. Encontra a licença e a família do produto no nosso banco de dados
+    entitlement_info = $db.exec_params("SELECT l.id, l.family FROM license_entitlements le JOIN licenses l ON le.license_id = l.id WHERE le.platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
+    unless entitlement_info
+      puts "[FINANCE] ALERTA: Não foi possível encontrar a licença local para a assinatura #{subscription_id}. Registro financeiro ignorado."
+      return
+    end
+    license_id = entitlement_info['id']
+    product_family = entitlement_info['family']
+
+    # 3. Atualiza o acumulado da ASSINATURA
+    $db.exec_params(
+      %q{
+        INSERT INTO subscription_financials (stripe_subscription_id, license_id, gross_revenue_accumulated, currency)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (stripe_subscription_id) DO UPDATE SET
+        gross_revenue_accumulated = subscription_financials.gross_revenue_accumulated + $3,
+        updated_at = NOW()
+      },
+      [subscription_id, license_id, amount_paid, currency]
+    )
+
+    # 4. Atualiza o acumulado MENSAL da FAMÍLIA
+    revenue_month = paid_at.strftime('%Y-%m-01') # Formata para o primeiro dia do mês
+    $db.exec_params(
+      %q{
+        INSERT INTO monthly_family_revenue (product_family, revenue_month, gross_revenue_month, currency)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (product_family, revenue_month, currency) DO UPDATE SET
+        gross_revenue_month = monthly_family_revenue.gross_revenue_month + $3,
+        updated_at = NOW()
+      },
+      [product_family, revenue_month, amount_paid, currency]
+    )
+    puts "[FINANCE] Transação de #{amount_paid} #{currency.upcase} para a assinatura #{subscription_id} registrada com sucesso."
   end
   
 end

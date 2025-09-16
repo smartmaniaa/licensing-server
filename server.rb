@@ -434,28 +434,42 @@ end
     redirect '/admin'
   end
 
-  get '/admin/license/:id' do
-    protected!
-    license_id = params['id']
-    @license = $db.exec_params("SELECT * FROM licenses WHERE id = $1", [license_id]).first
-    
-    @stripe_customer = nil
-    if @license && @license['stripe_customer_id']
-      customer_result = $db.exec_params(
-        "SELECT name, locale FROM stripe_customers WHERE stripe_customer_id = $1", 
-        [@license['stripe_customer_id']]
-      )
-      @stripe_customer = customer_result.first if customer_result.num_tuples > 0
-    end
+get '/admin/license/:id' do
+  protected!
+  license_id = params['id']
+  @license = $db.exec_params("SELECT * FROM licenses WHERE id = $1", [license_id]).first
+  
+  @entitlements = $db.exec_params(
+    "SELECT le.*, p.name AS product_name 
+     FROM license_entitlements le JOIN products p ON le.product_sku = p.sku
+     WHERE le.license_id = $1 ORDER BY le.id DESC", 
+    [license_id]
+  ).to_a # Convertendo para array para facilitar o uso
+  
+  # --- INÍCIO DA NOVA LÓGICA ---
+  # 1. Pega todos os IDs de assinatura únicos desta licença
+  subscription_ids = @entitlements.map { |e| e['platform_subscription_id'] }.compact.uniq
 
-    @entitlements = $db.exec_params(
-      "SELECT le.*, p.name AS product_name 
-       FROM license_entitlements le JOIN products p ON le.product_sku = p.sku
-       WHERE le.license_id = $1 ORDER BY le.id DESC", 
-      [license_id]
+  # 2. Busca os dados financeiros para essas assinaturas
+  @financials = {}
+  if !subscription_ids.empty?
+    financial_results = $db.exec_params(
+      "SELECT stripe_subscription_id, gross_revenue_accumulated, currency FROM subscription_financials WHERE stripe_subscription_id = ANY($1::varchar[])",
+      [subscription_ids]
     )
-    erb :license_detail
+
+    # 3. Formata os resultados no hash que a view espera
+    financial_results.each do |row|
+      @financials[row['stripe_subscription_id']] = {
+        "total" => row['gross_revenue_accumulated'].to_i,
+        "currency" => row['currency']
+      }
+    end
   end
+  # --- FIM DA NOVA LÓGICA ---
+
+  erb :license_detail
+end
 
   post '/admin/license/:id/revoke' do
     protected!

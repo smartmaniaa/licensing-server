@@ -36,7 +36,7 @@
 
     /* Tabela de Direitos de Uso */
     .entitlements-table { width: 100%; border-collapse: collapse; margin-top: 1em; }
-    .entitlements-table th, .entitlements-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #ddd; }
+    .entitlements-table th, .entitlements-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #ddd; vertical-align: middle; }
     .entitlements-table th { background-color: #ecf0f1; color: #34495e; }
     .status-active { color: #27ae60; font-weight: bold; }
     .status-trial { color: #2980b9; font-weight: bold; }
@@ -44,6 +44,7 @@
     .status-pending_cancellation { color: #f39c12; font-weight: bold; }
     .status-expired { color: #7f8c8d; font-weight: bold; }
     .status-awaiting_payment { color: #8e44ad; font-weight: bold; }
+    .revenue-value { color: #27ae60; font-weight: bold; }
 
 
     /* Estilos para o Modal (Popup) */
@@ -123,36 +124,32 @@
           <tr>
             <th>Produto</th>
             <th>Status</th>
-            <th>Origem</th>
             <th>Validade</th>
-            <th>ID Assinatura Stripe</th>
+            <th>Origem</th>
+            <th>ID</th>
+            <th>Receita</th>
             <th>Ações</th>
           </tr>
         </thead>
         <tbody>
           <% if @entitlements.num_tuples.zero? %>
-            <tr><td colspan="6" style="text-align: center;">Nenhum direito de uso encontrado.</td></tr>
+            <tr><td colspan="7" style="text-align: center;">Nenhum direito de uso encontrado.</td></tr>
           <% else %>
             <% @entitlements.each do |entitlement| %>
               <%
-                # --- LÓGICA FINAL E CORRIGIDA ---
                 is_expired = false
-                # Verifica a data de expiração do trial
                 if entitlement['trial_expires_at'] && Time.parse(entitlement['trial_expires_at']) < Time.now
                   is_expired = true
-                # Verifica a data de expiração de licenças pagas
                 elsif entitlement['expires_at'] && Time.parse(entitlement['expires_at']) < Time.now
                   is_expired = true
                 end
                 
-                # Define o status e a classe CSS para exibição
                 display_status = is_expired ? 'Vencida' : entitlement['status'].capitalize.gsub('_', ' ')
                 status_class = is_expired ? 'expired' : entitlement['status']
               %>
               <tr>
                 <td><%= entitlement['product_name'] %></td>
                 <td><span class="status-<%= status_class %>"><%= display_status %></span></td>
-                <td><%= entitlement['origin'] %></td>
                 <td>
                   <% if entitlement['trial_expires_at'] %>
                     Trial até <%= Time.parse(entitlement['trial_expires_at']).strftime('%d/%m/%Y %H:%M') %>
@@ -162,7 +159,19 @@
                     Vitalícia
                   <% end %>
                 </td>
+                <td><%= entitlement['origin'] %></td>
                 <td><code><%= entitlement['platform_subscription_id'] || 'N/A' %></code></td>
+                <td class="revenue-value">
+                  <%
+                    financial_data = @financials[entitlement['platform_subscription_id']]
+                    if financial_data
+                      formatted_revenue = sprintf('%s %.2f', financial_data["currency"].upcase == 'USD' ? 'US$' : 'R$', financial_data["total"] / 100.0)
+                      out << formatted_revenue
+                    else
+                      out << "---"
+                    end
+                  %>
+                </td>
                 <td>
                   <form action="/admin/entitlement/<%= entitlement['id'] %>/delete" method="post" onsubmit="return confirm('Tem certeza?');" style="margin:0;">
                     <input type="hidden" name="license_id" value="<%= @license['id'] %>">
