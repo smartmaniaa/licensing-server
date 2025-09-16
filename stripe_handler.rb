@@ -1,4 +1,4 @@
-# ---- stripe_handler.rb (VERSÃO 5.1.1 - CORREÇÃO FINAL COM TELEFONE) ----
+# ---- stripe_handler.rb (VERSÃO 5.1.1 - CORRIGIDA E COMPLETA COM FINANCEIRO E REEMBOLSO) ----
 require 'stripe'
 require 'json'
 require 'time'
@@ -61,9 +61,6 @@ module StripeHandler
       puts "[STRIPE] Cliente '#{email}' (ID: #{customer_id}) salvo/atualizado no banco local."
       return [200, {}, ['Cliente processado com sucesso']]
 
-
-
-    # NOVO EVENTO PARA TRATAR REEMBOLSOS
     when 'credit_note.created'
       credit_note_data = event['data']['object']
       invoice_id = credit_note_data['invoice']
@@ -72,14 +69,12 @@ module StripeHandler
       
       puts "[FINANCE] Recebido evento de nota de crédito (reembolso) para a fatura #{invoice_id}."
 
-      # Se não houver fatura associada, não podemos prosseguir.
       unless invoice_id
         puts "[FINANCE] ALERTA: Nota de crédito #{credit_note_data['id']} sem ID de fatura. Nenhuma ação tomada."
         return [200, {}, ['Nota de crédito sem fatura']]
       end
 
       begin
-        # 1. Consulta à API do Stripe para buscar os detalhes da fatura
         invoice = Stripe::Invoice.retrieve(invoice_id)
         subscription_id = invoice.subscription
 
@@ -88,22 +83,18 @@ module StripeHandler
           return [200, {}, ['Fatura não pertence a uma assinatura']]
         end
 
-        # 2. Encontra a família do produto no nosso banco de dados
-        entitlement_info = $db.exec_params("SELECT family FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
+        entitlement_info = $db.exec_params("SELECT family FROM license_entitlements le JOIN licenses l ON le.license_id = l.id WHERE le.platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
         unless entitlement_info
           puts "[FINANCE] ALERTA: Não foi possível encontrar a família para a assinatura #{subscription_id}. Reembolso não processado."
           return [200, {}, ['Assinatura não encontrada localmente']]
         end
         product_family = entitlement_info['family']
         
-        # 3. Subtrai o valor do acumulado da ASSINATURA
         $db.exec_params(
           "UPDATE subscription_financials SET gross_revenue_accumulated = gross_revenue_accumulated - $1, updated_at = NOW() WHERE stripe_subscription_id = $2",
           [amount_refunded, subscription_id]
         )
 
-        # 4. Subtrai o valor do acumulado MENSAL da FAMÍLIA
-        # Usamos a data de criação da nota de crédito para identificar o mês correto
         refund_month = Time.at(credit_note_data['created']).strftime('%Y-%m-01')
         $db.exec_params(
           "UPDATE monthly_family_revenue SET gross_revenue_month = gross_revenue_month - $1, updated_at = NOW() WHERE product_family = $2 AND revenue_month = $3 AND currency = $4",
@@ -121,7 +112,6 @@ module StripeHandler
       end
       
       return [200, {}, ['Reembolso processado']]
-
 
     when 'customer.subscription.created'
       subscription_data = event['data']['object']
@@ -168,7 +158,6 @@ module StripeHandler
       end
       return [200, {}, ['Direito de uso provisionado com sucesso']]
 
-    # --- LÓGICA DE ATUALIZAÇÃO, RENOVAÇÃO E CANCELAMENTO UNIFICADA ---
     when 'customer.subscription.updated'
       subscription_data = event['data']['object']
       subscription_id = subscription_data['id']
@@ -195,22 +184,15 @@ module StripeHandler
       end
       return [200, {}, ['Atualização de assinatura processada']]
 
-
-
-    # --- WEBHOOKS DE PAGAMENTO (RENOVAÇÃO E CRIAÇÃO) ---
     when 'invoice.paid', 'invoice.payment_succeeded'
       invoice_data = event['data']['object']
       
-      # --- PASSO 1: REGISTRO FINANCEIRO ---
-      # Esta nova linha chama o método que acabamos de criar.
-      # Ele irá registrar TODAS as transações de pagamento, incluindo as de valor zero.
       record_financial_transaction(invoice_data)
 
-      # --- PASSO 2: LÓGICA DE ATUALIZAÇÃO DA LICENÇA (lógica antiga, agora focada apenas na renovação) ---
       billing_reason = invoice_data['billing_reason']&.strip
       
       if billing_reason == 'subscription_cycle'
-        subscription_id = invoice_data.dig('parent', 'subscription_details', 'subscription')
+        subscription_id = invoice_data.dig('parent', 'subscription_details', 'subscription') || invoice_data.dig('lines', 'data', 0, 'subscription')
         period_end_timestamp = invoice_data.dig('lines', 'data', 0, 'period', 'end')
         
         if subscription_id && period_end_timestamp
@@ -232,143 +214,15 @@ module StripeHandler
       end
       
       return [200, {}, ['Evento de pagamento processado']]
-      invoice_data = event['data']['object']
-      billing_reason = invoice_data['billing_reason']&.strip
-      event_id = event['id']
-
-      case billing_reason
-      when 'subscription_cycle'
-        # --- CENÁRIO 1: RENOVAÇÃO DE ASSINATURA ---
-        
-        # --- LÓGICA DE EXTRAÇÃO CORRIGIDA COM BASE NO SEU WEBHOOK ---
-        subscription_id = invoice_data.dig('parent', 'subscription_details', 'subscription')
-        period_end_timestamp = invoice_data.dig('lines', 'data', 0, 'period', 'end')
-        
-        unless subscription_id && period_end_timestamp
-          puts "[STRIPE] ERRO CRÍTICO: Não foi possível encontrar 'subscription_id' ou 'period_end' no evento de renovação #{event_id}."
-          SmartManiaaApp.log_event(level: 'error', source: 'stripe_webhook', message: "Dados essenciais ausentes no evento de renovação", details: event)
-          return [500, {}, ['Dados essenciais ausentes no payload']]
-        end
-
-        puts "[STRIPE] Processando RENOVAÇÃO para a assinatura: #{subscription_id}."
-        
-        new_expires_at = Time.at(period_end_timestamp)
-        result = License.update_entitlement_from_stripe(
-          subscription_id: subscription_id, 
-          new_status: 'active', 
-          new_expires_at: new_expires_at
-        )
-        
-        if result.cmd_tuples > 0
-          puts "[STRIPE] Sucesso: RENOVAÇÃO CONFIRMADA. Assinatura #{subscription_id} válida até #{new_expires_at}."
-        else
-          puts "[STRIPE] ALERTA: Renovação processada, mas nenhuma licença foi atualizada para a assinatura #{subscription_id}. Verifique se o ID existe no banco."
-        end
-
-      when 'subscription_create'
-        # --- CENÁRIO 2: PAGAMENTO INICIAL ---
-        puts "[STRIPE] Info: Pagamento inicial (ID: #{event_id}) ignorado. A licença já foi provisionada. Comportamento esperado."
-
-      else
-        # --- CENÁRIO 3: CASO NÃO ESPERADO ---
-        puts "[STRIPE] ALERTA: Recebido 'billing_reason' não esperado: '#{billing_reason}' no evento #{event_id}. Nenhuma ação foi tomada."
-      end
-
-      return [200, {}, ['Evento de pagamento processado']]
-      invoice_data = event['data']['object']
-      subscription_id = invoice_data['subscription']
-      billing_reason = invoice_data['billing_reason']&.strip
-      event_id = event['id']
-
-      # Usamos um 'case' para tratar explicitamente cada tipo de 'billing_reason'.
-      case billing_reason
-      when 'subscription_cycle'
-        # --- CENÁRIO 1: RENOVAÇÃO DE ASSINATURA ---
-        # Este é o único caso em que devemos atualizar a licença.
-        puts "[STRIPE] Processando RENOVAÇÃO para a assinatura: #{subscription_id}."
-        
-        new_expires_at = Time.at(invoice_data['period_end'])
-        License.update_entitlement_from_stripe(
-          subscription_id: subscription_id, 
-          new_status: 'active', 
-          new_expires_at: new_expires_at
-        )
-        
-        puts "[STRIPE] Sucesso: RENOVAÇÃO CONFIRMADA. Assinatura #{subscription_id} válida até #{new_expires_at}."
-
-      when 'subscription_create'
-        # --- CENÁRIO 2: PAGAMENTO INICIAL ---
-        # A licença já foi criada pelo evento 'customer.subscription.created'.
-        # Ignoramos este evento de forma intencional e registramos isso no log.
-        puts "[STRIPE] Info: Pagamento inicial (ID: #{event_id}) ignorado. A licença já foi provisionada. Comportamento esperado."
-
-      else
-        # --- CENÁRIO 3: CASO NÃO ESPERADO ---
-        # Se recebermos um 'billing_reason' diferente, registramos como um alerta.
-        puts "[STRIPE] ALERTA: Recebido 'billing_reason' não esperado: '#{billing_reason}' no evento #{event_id}. Nenhuma ação foi tomada."
-        SmartManiaaApp.log_event(
-          level: 'warning', 
-          source: 'stripe_webhook', 
-          message: "Recebido 'billing_reason' não esperado: '#{billing_reason}'", 
-          details: event
-        )
-      end
-
-      return [200, {}, ['Evento de pagamento processado']]
-      invoice_data = event['data']['object']
-      subscription_id = invoice_data['subscription']
-      billing_reason = invoice_data['billing_reason']
       
-      # --- CORREÇÃO FINAL E MAIS ROBUSTA ---
-      # Verificamos explicitamente se é uma String antes de tentar limpá-la.
-      # Isso torna a comparação à prova de caracteres invisíveis e outros problemas de formatação.
-      if subscription_id && billing_reason.is_a?(String) && billing_reason.strip == 'subscription_cycle'
-        # O campo 'period_end' dentro do objeto da fatura indica a nova data de validade.
-        new_expires_at = Time.at(invoice_data['period_end'])
-        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active', new_expires_at: new_expires_at)
-        puts "[STRIPE] Sucesso: RENOVAÇÃO CONFIRMADA para Assinatura #{subscription_id}. Nova validade: #{new_expires_at}."
-      else
-        # Log aprimorado para ajudar a depurar futuros problemas.
-        puts "[STRIPE] Info: Evento de pagamento ignorado. Motivo recebido: '#{billing_reason}' (Tipo: #{billing_reason.class}). Condição para renovação não atendida."
-      end
-      return [200, {}, ['Evento de pagamento processado']]
-      invoice_data = event['data']['object']
-      subscription_id = invoice_data['subscription']
-      
-      # --- CORREÇÃO APLICADA AQUI ---
-      # Usamos .strip para garantir que a comparação não falhe por espaços invisíveis.
-      if subscription_id && invoice_data['billing_reason']&.strip == 'subscription_cycle'
-        new_expires_at = Time.at(invoice_data['period_end'])
-        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active', new_expires_at: new_expires_at)
-        puts "[STRIPE] Sucesso: RENOVAÇÃO CONFIRMADA para Assinatura #{subscription_id}."
-      else
-        puts "[STRIPE] Info: Evento de pagamento ignorado (motivo: #{invoice_data['billing_reason'] || 'não é um ciclo de assinatura'})."
-      end
-      return [200, {}, ['Evento de pagamento processado']]
-      invoice_data = event['data']['object']
-      subscription_id = invoice_data['subscription']
-      
-      # --- CORREÇÃO APLICADA AQUI ---
-      # Agora processa corretamente as renovações
-      if subscription_id && invoice_data['billing_reason'] == 'subscription_cycle'
-        new_expires_at = Time.at(invoice_data['period_end'])
-        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active', new_expires_at: new_expires_at)
-        puts "[STRIPE] Sucesso: RENOVAÇÃO CONFIRMADA para Assinatura #{subscription_id}."
-      else
-        puts "[STRIPE] Info: Evento de pagamento ignorado (motivo: #{invoice_data['billing_reason'] || 'não é um ciclo de assinatura'})."
-      end
-      return [200, {}, ['Evento de pagamento processado']]
-      
-    
     when 'invoice.payment_failed'
       invoice_data = event['data']['object']
       subscription_id = invoice_data['subscription']
 
       if subscription_id
-          puts "[STRIPE] ALERTA: Falha no pagamento da renovação para a assinatura #{subscription_id}."
-          # Ação: Reverte o status para 'active'. A licença irá expirar na data antiga.
-          License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active')
-          SmartManiaaApp.log_event(level: 'warning', source: 'stripe_webhook', message: "Falha no pagamento da fatura para a assinatura #{subscription_id}", details: event)
+        puts "[STRIPE] ALERTA: Falha no pagamento da renovação para a assinatura #{subscription_id}."
+        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active')
+        SmartManiaaApp.log_event(level: 'warning', source: 'stripe_webhook', message: "Falha no pagamento da fatura para a assinatura #{subscription_id}", details: event)
       end
       return [200, {}, ['Falha de pagamento processada']]
 
@@ -387,80 +241,21 @@ module StripeHandler
       puts "[STRIPE] Info: Evento não tratado recebido: #{event_type}."
       return [200, {}, ['Evento não tratado']]
     end
-    when 'credit_note.created'
-      credit_note_data = event['data']['object']
-      invoice_id = credit_note_data['invoice']
-      amount_refunded = credit_note_data['amount']
-      currency = credit_note_data['currency']
-      
-      puts "[FINANCE] Recebido evento de nota de crédito (reembolso) para a fatura #{invoice_id}."
-
-      # Se não houver fatura associada, não podemos prosseguir.
-      unless invoice_id
-        puts "[FINANCE] ALERTA: Nota de crédito #{credit_note_data['id']} sem ID de fatura. Nenhuma ação tomada."
-        return [200, {}, ['Nota de crédito sem fatura']]
-      end
-
-      begin
-        # 1. Consulta à API do Stripe para buscar os detalhes da fatura
-        invoice = Stripe::Invoice.retrieve(invoice_id)
-        subscription_id = invoice.subscription
-
-        unless subscription_id
-          puts "[FINANCE] ALERTA: Fatura #{invoice_id} não está associada a uma assinatura. Reembolso não processado."
-          return [200, {}, ['Fatura não pertence a uma assinatura']]
-        end
-
-        # 2. Encontra a família do produto no nosso banco de dados
-        entitlement_info = $db.exec_params("SELECT family FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
-        unless entitlement_info
-          puts "[FINANCE] ALERTA: Não foi possível encontrar a família para a assinatura #{subscription_id}. Reembolso não processado."
-          return [200, {}, ['Assinatura não encontrada localmente']]
-        end
-        product_family = entitlement_info['family']
-        
-        # 3. Subtrai o valor do acumulado da ASSINATURA
-        $db.exec_params(
-          "UPDATE subscription_financials SET gross_revenue_accumulated = gross_revenue_accumulated - $1, updated_at = NOW() WHERE stripe_subscription_id = $2",
-          [amount_refunded, subscription_id]
-        )
-
-        # 4. Subtrai o valor do acumulado MENSAL da FAMÍLIA
-        # Usamos a data de criação da nota de crédito para identificar o mês correto
-        refund_month = Time.at(credit_note_data['created']).strftime('%Y-%m-01')
-        $db.exec_params(
-          "UPDATE monthly_family_revenue SET gross_revenue_month = gross_revenue_month - $1, updated_at = NOW() WHERE product_family = $2 AND revenue_month = $3 AND currency = $4",
-          [amount_refunded, product_family, refund_month, currency.upcase]
-        )
-        
-        puts "[FINANCE] Reembolso de #{amount_refunded} #{currency.upcase} para a assinatura #{subscription_id} registrado com sucesso."
-
-      rescue Stripe::InvalidRequestError => e
-        puts "[FINANCE] ERRO: Falha ao buscar fatura #{invoice_id} no Stripe: #{e.message}"
-        return [404, {}, ['Fatura não encontrada no Stripe']]
-      rescue => e
-        puts "[FINANCE] ERRO INESPERADO ao processar reembolso: #{e.message}"
-        return [500, {}, ['Erro interno no servidor']]
-      end
-      
-      return [200, {}, ['Reembolso processado']]
   end
 
-  # ---- NOVO MÉTODO PRIVADO PARA REGISTRO FINANCEIRO ----
-  private
-
   def self.record_financial_transaction(invoice_data)
-    # 1. Extrai os dados essenciais da fatura
     amount_paid = invoice_data['amount_paid']
     currency = invoice_data['currency']
     stripe_invoice_id = invoice_data['id']
-    paid_at = Time.at(invoice_data['status_transitions']['paid_at'])
-    subscription_id = invoice_data.dig('parent', 'subscription_details', 'subscription')
+    paid_at_timestamp = invoice_data.dig('status_transitions', 'paid_at')
+    
+    return unless paid_at_timestamp
+    paid_at = Time.at(paid_at_timestamp)
 
-    # Se não houver ID de assinatura, não é uma transação que nos interessa
+    subscription_id = invoice_data.dig('parent', 'subscription_details', 'subscription') || invoice_data.dig('lines', 'data', 0, 'subscription')
+    
     return unless subscription_id
 
-    # 2. Encontra a licença e a família do produto no nosso banco de dados
     entitlement_info = $db.exec_params("SELECT l.id, l.family FROM license_entitlements le JOIN licenses l ON le.license_id = l.id WHERE le.platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
     unless entitlement_info
       puts "[FINANCE] ALERTA: Não foi possível encontrar a licença local para a assinatura #{subscription_id}. Registro financeiro ignorado."
@@ -469,7 +264,6 @@ module StripeHandler
     license_id = entitlement_info['id']
     product_family = entitlement_info['family']
 
-    # 3. Atualiza o acumulado da ASSINATURA
     $db.exec_params(
       %q{
         INSERT INTO subscription_financials (stripe_subscription_id, license_id, gross_revenue_accumulated, currency)
@@ -481,8 +275,7 @@ module StripeHandler
       [subscription_id, license_id, amount_paid, currency]
     )
 
-    # 4. Atualiza o acumulado MENSAL da FAMÍLIA
-    revenue_month = paid_at.strftime('%Y-%m-01') # Formata para o primeiro dia do mês
+    revenue_month = paid_at.strftime('%Y-%m-01')
     $db.exec_params(
       %q{
         INSERT INTO monthly_family_revenue (product_family, revenue_month, gross_revenue_month, currency)
@@ -495,5 +288,4 @@ module StripeHandler
     )
     puts "[FINANCE] Transação de #{amount_paid} #{currency.upcase} para a assinatura #{subscription_id} registrada com sucesso."
   end
-  
 end
