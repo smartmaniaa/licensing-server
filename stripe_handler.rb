@@ -138,6 +138,46 @@ module StripeHandler
     when 'invoice.paid', 'invoice.payment_succeeded'
       invoice_data = event['data']['object']
       subscription_id = invoice_data['subscription']
+      billing_reason = invoice_data['billing_reason']&.strip
+      event_id = event['id']
+
+      # Usamos um 'case' para tratar explicitamente cada tipo de 'billing_reason'.
+      case billing_reason
+      when 'subscription_cycle'
+        # --- CENÁRIO 1: RENOVAÇÃO DE ASSINATURA ---
+        # Este é o único caso em que devemos atualizar a licença.
+        puts "[STRIPE] Processando RENOVAÇÃO para a assinatura: #{subscription_id}."
+        
+        new_expires_at = Time.at(invoice_data['period_end'])
+        License.update_entitlement_from_stripe(
+          subscription_id: subscription_id, 
+          new_status: 'active', 
+          new_expires_at: new_expires_at
+        )
+        
+        puts "[STRIPE] Sucesso: RENOVAÇÃO CONFIRMADA. Assinatura #{subscription_id} válida até #{new_expires_at}."
+
+      when 'subscription_create'
+        # --- CENÁRIO 2: PAGAMENTO INICIAL ---
+        # A licença já foi criada pelo evento 'customer.subscription.created'.
+        # Ignoramos este evento de forma intencional e registramos isso no log.
+        puts "[STRIPE] Info: Pagamento inicial (ID: #{event_id}) ignorado. A licença já foi provisionada. Comportamento esperado."
+
+      else
+        # --- CENÁRIO 3: CASO NÃO ESPERADO ---
+        # Se recebermos um 'billing_reason' diferente, registramos como um alerta.
+        puts "[STRIPE] ALERTA: Recebido 'billing_reason' não esperado: '#{billing_reason}' no evento #{event_id}. Nenhuma ação foi tomada."
+        SmartManiaaApp.log_event(
+          level: 'warning', 
+          source: 'stripe_webhook', 
+          message: "Recebido 'billing_reason' não esperado: '#{billing_reason}'", 
+          details: event
+        )
+      end
+
+      return [200, {}, ['Evento de pagamento processado']]
+      invoice_data = event['data']['object']
+      subscription_id = invoice_data['subscription']
       billing_reason = invoice_data['billing_reason']
       
       # --- CORREÇÃO FINAL E MAIS ROBUSTA ---
