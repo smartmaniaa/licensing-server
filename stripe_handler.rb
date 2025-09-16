@@ -134,8 +134,52 @@ module StripeHandler
       return [200, {}, ['Atualização de assinatura processada']]
 
 
+
     # --- WEBHOOKS DE PAGAMENTO (RENOVAÇÃO E CRIAÇÃO) ---
     when 'invoice.paid', 'invoice.payment_succeeded'
+      invoice_data = event['data']['object']
+      billing_reason = invoice_data['billing_reason']&.strip
+      event_id = event['id']
+
+      case billing_reason
+      when 'subscription_cycle'
+        # --- CENÁRIO 1: RENOVAÇÃO DE ASSINATURA ---
+        
+        # --- LÓGICA DE EXTRAÇÃO CORRIGIDA COM BASE NO SEU WEBHOOK ---
+        subscription_id = invoice_data.dig('parent', 'subscription_details', 'subscription')
+        period_end_timestamp = invoice_data.dig('lines', 'data', 0, 'period', 'end')
+        
+        unless subscription_id && period_end_timestamp
+          puts "[STRIPE] ERRO CRÍTICO: Não foi possível encontrar 'subscription_id' ou 'period_end' no evento de renovação #{event_id}."
+          SmartManiaaApp.log_event(level: 'error', source: 'stripe_webhook', message: "Dados essenciais ausentes no evento de renovação", details: event)
+          return [500, {}, ['Dados essenciais ausentes no payload']]
+        end
+
+        puts "[STRIPE] Processando RENOVAÇÃO para a assinatura: #{subscription_id}."
+        
+        new_expires_at = Time.at(period_end_timestamp)
+        result = License.update_entitlement_from_stripe(
+          subscription_id: subscription_id, 
+          new_status: 'active', 
+          new_expires_at: new_expires_at
+        )
+        
+        if result.cmd_tuples > 0
+          puts "[STRIPE] Sucesso: RENOVAÇÃO CONFIRMADA. Assinatura #{subscription_id} válida até #{new_expires_at}."
+        else
+          puts "[STRIPE] ALERTA: Renovação processada, mas nenhuma licença foi atualizada para a assinatura #{subscription_id}. Verifique se o ID existe no banco."
+        end
+
+      when 'subscription_create'
+        # --- CENÁRIO 2: PAGAMENTO INICIAL ---
+        puts "[STRIPE] Info: Pagamento inicial (ID: #{event_id}) ignorado. A licença já foi provisionada. Comportamento esperado."
+
+      else
+        # --- CENÁRIO 3: CASO NÃO ESPERADO ---
+        puts "[STRIPE] ALERTA: Recebido 'billing_reason' não esperado: '#{billing_reason}' no evento #{event_id}. Nenhuma ação foi tomada."
+      end
+
+      return [200, {}, ['Evento de pagamento processado']]
       invoice_data = event['data']['object']
       subscription_id = invoice_data['subscription']
       billing_reason = invoice_data['billing_reason']&.strip
