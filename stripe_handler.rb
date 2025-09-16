@@ -61,6 +61,68 @@ module StripeHandler
       puts "[STRIPE] Cliente '#{email}' (ID: #{customer_id}) salvo/atualizado no banco local."
       return [200, {}, ['Cliente processado com sucesso']]
 
+
+
+    # NOVO EVENTO PARA TRATAR REEMBOLSOS
+    when 'credit_note.created'
+      credit_note_data = event['data']['object']
+      invoice_id = credit_note_data['invoice']
+      amount_refunded = credit_note_data['amount']
+      currency = credit_note_data['currency']
+      
+      puts "[FINANCE] Recebido evento de nota de crédito (reembolso) para a fatura #{invoice_id}."
+
+      # Se não houver fatura associada, não podemos prosseguir.
+      unless invoice_id
+        puts "[FINANCE] ALERTA: Nota de crédito #{credit_note_data['id']} sem ID de fatura. Nenhuma ação tomada."
+        return [200, {}, ['Nota de crédito sem fatura']]
+      end
+
+      begin
+        # 1. Consulta à API do Stripe para buscar os detalhes da fatura
+        invoice = Stripe::Invoice.retrieve(invoice_id)
+        subscription_id = invoice.subscription
+
+        unless subscription_id
+          puts "[FINANCE] ALERTA: Fatura #{invoice_id} não está associada a uma assinatura. Reembolso não processado."
+          return [200, {}, ['Fatura não pertence a uma assinatura']]
+        end
+
+        # 2. Encontra a família do produto no nosso banco de dados
+        entitlement_info = $db.exec_params("SELECT family FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
+        unless entitlement_info
+          puts "[FINANCE] ALERTA: Não foi possível encontrar a família para a assinatura #{subscription_id}. Reembolso não processado."
+          return [200, {}, ['Assinatura não encontrada localmente']]
+        end
+        product_family = entitlement_info['family']
+        
+        # 3. Subtrai o valor do acumulado da ASSINATURA
+        $db.exec_params(
+          "UPDATE subscription_financials SET gross_revenue_accumulated = gross_revenue_accumulated - $1, updated_at = NOW() WHERE stripe_subscription_id = $2",
+          [amount_refunded, subscription_id]
+        )
+
+        # 4. Subtrai o valor do acumulado MENSAL da FAMÍLIA
+        # Usamos a data de criação da nota de crédito para identificar o mês correto
+        refund_month = Time.at(credit_note_data['created']).strftime('%Y-%m-01')
+        $db.exec_params(
+          "UPDATE monthly_family_revenue SET gross_revenue_month = gross_revenue_month - $1, updated_at = NOW() WHERE product_family = $2 AND revenue_month = $3 AND currency = $4",
+          [amount_refunded, product_family, refund_month, currency.upcase]
+        )
+        
+        puts "[FINANCE] Reembolso de #{amount_refunded} #{currency.upcase} para a assinatura #{subscription_id} registrado com sucesso."
+
+      rescue Stripe::InvalidRequestError => e
+        puts "[FINANCE] ERRO: Falha ao buscar fatura #{invoice_id} no Stripe: #{e.message}"
+        return [404, {}, ['Fatura não encontrada no Stripe']]
+      rescue => e
+        puts "[FINANCE] ERRO INESPERADO ao processar reembolso: #{e.message}"
+        return [500, {}, ['Erro interno no servidor']]
+      end
+      
+      return [200, {}, ['Reembolso processado']]
+
+
     when 'customer.subscription.created'
       subscription_data = event['data']['object']
       subscription_id = subscription_data['id']
@@ -325,6 +387,63 @@ module StripeHandler
       puts "[STRIPE] Info: Evento não tratado recebido: #{event_type}."
       return [200, {}, ['Evento não tratado']]
     end
+    when 'credit_note.created'
+      credit_note_data = event['data']['object']
+      invoice_id = credit_note_data['invoice']
+      amount_refunded = credit_note_data['amount']
+      currency = credit_note_data['currency']
+      
+      puts "[FINANCE] Recebido evento de nota de crédito (reembolso) para a fatura #{invoice_id}."
+
+      # Se não houver fatura associada, não podemos prosseguir.
+      unless invoice_id
+        puts "[FINANCE] ALERTA: Nota de crédito #{credit_note_data['id']} sem ID de fatura. Nenhuma ação tomada."
+        return [200, {}, ['Nota de crédito sem fatura']]
+      end
+
+      begin
+        # 1. Consulta à API do Stripe para buscar os detalhes da fatura
+        invoice = Stripe::Invoice.retrieve(invoice_id)
+        subscription_id = invoice.subscription
+
+        unless subscription_id
+          puts "[FINANCE] ALERTA: Fatura #{invoice_id} não está associada a uma assinatura. Reembolso não processado."
+          return [200, {}, ['Fatura não pertence a uma assinatura']]
+        end
+
+        # 2. Encontra a família do produto no nosso banco de dados
+        entitlement_info = $db.exec_params("SELECT family FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
+        unless entitlement_info
+          puts "[FINANCE] ALERTA: Não foi possível encontrar a família para a assinatura #{subscription_id}. Reembolso não processado."
+          return [200, {}, ['Assinatura não encontrada localmente']]
+        end
+        product_family = entitlement_info['family']
+        
+        # 3. Subtrai o valor do acumulado da ASSINATURA
+        $db.exec_params(
+          "UPDATE subscription_financials SET gross_revenue_accumulated = gross_revenue_accumulated - $1, updated_at = NOW() WHERE stripe_subscription_id = $2",
+          [amount_refunded, subscription_id]
+        )
+
+        # 4. Subtrai o valor do acumulado MENSAL da FAMÍLIA
+        # Usamos a data de criação da nota de crédito para identificar o mês correto
+        refund_month = Time.at(credit_note_data['created']).strftime('%Y-%m-01')
+        $db.exec_params(
+          "UPDATE monthly_family_revenue SET gross_revenue_month = gross_revenue_month - $1, updated_at = NOW() WHERE product_family = $2 AND revenue_month = $3 AND currency = $4",
+          [amount_refunded, product_family, refund_month, currency.upcase]
+        )
+        
+        puts "[FINANCE] Reembolso de #{amount_refunded} #{currency.upcase} para a assinatura #{subscription_id} registrado com sucesso."
+
+      rescue Stripe::InvalidRequestError => e
+        puts "[FINANCE] ERRO: Falha ao buscar fatura #{invoice_id} no Stripe: #{e.message}"
+        return [404, {}, ['Fatura não encontrada no Stripe']]
+      rescue => e
+        puts "[FINANCE] ERRO INESPERADO ao processar reembolso: #{e.message}"
+        return [500, {}, ['Erro interno no servidor']]
+      end
+      
+      return [200, {}, ['Reembolso processado']]
   end
 
   # ---- NOVO MÉTODO PRIVADO PARA REGISTRO FINANCEIRO ----
