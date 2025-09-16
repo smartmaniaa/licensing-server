@@ -454,8 +454,8 @@ get '/admin/license/:id' do
   @financials = {}
   if !subscription_ids.empty?
     financial_results = $db.exec_params(
-      "SELECT stripe_subscription_id, gross_revenue_accumulated, currency FROM subscription_financials WHERE stripe_subscription_id = ANY($1::varchar[])",
-      [subscription_ids]
+      "SELECT stripe_subscription_id, gross_revenue_accumulated, currency FROM subscription_financials WHERE stripe_subscription_id = ANY($1)",
+      ["{#{subscription_ids.join(',')}}"]
     )
 
     # 3. Formata os resultados no hash que a view espera
