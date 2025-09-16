@@ -132,8 +132,10 @@
           </tr>
         </thead>
         <tbody>
-          <% if @entitlements.num_tuples.zero? %>
-            <tr><td colspan="7" style="text-align: center;">Nenhum direito de uso encontrado.</td></tr>
+          <% if @entitlements.empty? %>
+            <tr>
+              <td colspan="7" style="text-align: center;">Nenhum direito de uso encontrado para esta licença.</td>
+            </tr>
           <% else %>
             <% @entitlements.each do |entitlement| %>
               <%
