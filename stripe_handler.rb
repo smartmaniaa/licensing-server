@@ -1,4 +1,4 @@
-# ---- stripe_handler.rb (VERSÃO 5.1.1 - CORRIGIDA E COMPLETA COM FINANCEIRO E REEMBOLSO) ----
+# ---- stripe_handler.rb (VERSÃO FINAL COM REEMBOLSO SIMPLIFICADO) ----
 require 'stripe'
 require 'json'
 require 'time'
@@ -61,113 +61,44 @@ module StripeHandler
       puts "[STRIPE] Cliente '#{email}' (ID: #{customer_id}) salvo/atualizado no banco local."
       return [200, {}, ['Cliente processado com sucesso']]
 
-
-
-    # ===== BLOCO DE REEMBOLSO CORRIGIDO =====
     when 'credit_note.created'
       credit_note_data = event['data']['object']
-      invoice_id = credit_note_data['invoice']
+      customer_id = credit_note_data['customer']
       amount_refunded = credit_note_data['amount']
       currency = credit_note_data['currency']
       
-      puts "[FINANCE] Recebido evento de nota de crédito (reembolso) para a fatura #{invoice_id}."
+      puts "[FINANCE] Recebido evento de reembolso de #{amount_refunded} #{currency.upcase} para o cliente #{customer_id}."
 
-      unless invoice_id
-        puts "[FINANCE] ALERTA: Nota de crédito #{credit_note_data['id']} sem ID de fatura. Nenhuma ação tomada."
-        return [200, {}, ['Nota de crédito sem fatura']]
+      unless customer_id
+        puts "[FINANCE] ALERTA: Nota de crédito #{credit_note_data['id']} sem ID de cliente. Reembolso não contabilizado."
+        return [200, {}, ['Nota de crédito sem cliente']]
       end
 
-      begin
-        invoice = Stripe::Invoice.retrieve(invoice_id)
-        
-        # --- CORREÇÃO APLICADA AQUI ---
-        # Verificamos se o objeto 'invoice' tem o campo 'subscription' ANTES de o aceder.
-        unless invoice.respond_to?(:subscription) && invoice.subscription
-          puts "[FINANCE] ALERTA: Fatura #{invoice_id} não está associada a uma assinatura. Reembolso não processado."
-          return [200, {}, ['Fatura não pertence a uma assinatura']]
-        end
-        
-        subscription_id = invoice.subscription
-
-        entitlement_info = $db.exec_params("SELECT family FROM license_entitlements le JOIN licenses l ON le.license_id = l.id WHERE le.platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
-        unless entitlement_info
-          puts "[FINANCE] ALERTA: Não foi possível encontrar a família para a assinatura #{subscription_id}. Reembolso não processado."
-          return [200, {}, ['Assinatura não encontrada localmente']]
-        end
-        product_family = entitlement_info['family']
-        
-        $db.exec_params(
-          "UPDATE subscription_financials SET gross_revenue_accumulated = gross_revenue_accumulated - $1, updated_at = NOW() WHERE stripe_subscription_id = $2",
-          [amount_refunded, subscription_id]
-        )
-
-        refund_month = Time.at(credit_note_data['created']).strftime('%Y-%m-01')
-        $db.exec_params(
-          "UPDATE monthly_family_revenue SET gross_revenue_month = gross_revenue_month - $1, updated_at = NOW() WHERE product_family = $2 AND revenue_month = $3 AND currency = $4",
-          [amount_refunded, product_family, refund_month, currency.upcase]
-        )
-        
-        puts "[FINANCE] Reembolso de #{amount_refunded} #{currency.upcase} para a assinatura #{subscription_id} registrado com sucesso."
-
-      rescue Stripe::InvalidRequestError => e
-        puts "[FINANCE] ERRO: Falha ao buscar fatura #{invoice_id} no Stripe: #{e.message}"
-        return [404, {}, ['Fatura não encontrada no Stripe']]
-      rescue => e
-        puts "[FINANCE] ERRO INESPERADO ao processar reembolso: #{e.message}"
-        return [500, {}, ['Erro interno no servidor']]
+      # Encontra a família do produto baseada na licença mais recente do cliente
+      license_info = $db.exec_params("SELECT family FROM licenses WHERE stripe_customer_id = $1 ORDER BY created_at DESC LIMIT 1", [customer_id]).first
+      unless license_info
+        puts "[FINANCE] ALERTA: Não foi possível encontrar uma licença para o cliente #{customer_id}. Reembolso não contabilizado."
+        return [200, {}, ['Cliente sem licença local']]
       end
+      product_family = license_info['family']
+
+      refund_month = Time.at(credit_note_data['created']).strftime('%Y-%m-01')
       
-      return [200, {}, ['Reembolso processado']]
-      credit_note_data = event['data']['object']
-      invoice_id = credit_note_data['invoice']
-      amount_refunded = credit_note_data['amount']
-      currency = credit_note_data['currency']
+      # Atualiza a tabela de agregados de reembolso
+      $db.exec_params(
+        %q{
+          INSERT INTO monthly_refunds (product_family, refund_month, total_refunded, refund_count, currency)
+          VALUES ($1, $2, $3, 1, $4)
+          ON CONFLICT (product_family, refund_month, currency) DO UPDATE SET
+          total_refunded = monthly_refunds.total_refunded + $3,
+          refund_count = monthly_refunds.refund_count + 1,
+          updated_at = NOW()
+        },
+        [product_family, refund_month, amount_refunded, currency.upcase]
+      )
       
-      puts "[FINANCE] Recebido evento de nota de crédito (reembolso) para a fatura #{invoice_id}."
-
-      unless invoice_id
-        puts "[FINANCE] ALERTA: Nota de crédito #{credit_note_data['id']} sem ID de fatura. Nenhuma ação tomada."
-        return [200, {}, ['Nota de crédito sem fatura']]
-      end
-
-      begin
-        invoice = Stripe::Invoice.retrieve(invoice_id)
-        subscription_id = invoice.subscription
-
-        unless subscription_id
-          puts "[FINANCE] ALERTA: Fatura #{invoice_id} não está associada a uma assinatura. Reembolso não processado."
-          return [200, {}, ['Fatura não pertence a uma assinatura']]
-        end
-
-        entitlement_info = $db.exec_params("SELECT family FROM license_entitlements le JOIN licenses l ON le.license_id = l.id WHERE le.platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
-        unless entitlement_info
-          puts "[FINANCE] ALERTA: Não foi possível encontrar a família para a assinatura #{subscription_id}. Reembolso não processado."
-          return [200, {}, ['Assinatura não encontrada localmente']]
-        end
-        product_family = entitlement_info['family']
-        
-        $db.exec_params(
-          "UPDATE subscription_financials SET gross_revenue_accumulated = gross_revenue_accumulated - $1, updated_at = NOW() WHERE stripe_subscription_id = $2",
-          [amount_refunded, subscription_id]
-        )
-
-        refund_month = Time.at(credit_note_data['created']).strftime('%Y-%m-01')
-        $db.exec_params(
-          "UPDATE monthly_family_revenue SET gross_revenue_month = gross_revenue_month - $1, updated_at = NOW() WHERE product_family = $2 AND revenue_month = $3 AND currency = $4",
-          [amount_refunded, product_family, refund_month, currency.upcase]
-        )
-        
-        puts "[FINANCE] Reembolso de #{amount_refunded} #{currency.upcase} para a assinatura #{subscription_id} registrado com sucesso."
-
-      rescue Stripe::InvalidRequestError => e
-        puts "[FINANCE] ERRO: Falha ao buscar fatura #{invoice_id} no Stripe: #{e.message}"
-        return [404, {}, ['Fatura não encontrada no Stripe']]
-      rescue => e
-        puts "[FINANCE] ERRO INESPERADO ao processar reembolso: #{e.message}"
-        return [500, {}, ['Erro interno no servidor']]
-      end
-      
-      return [200, {}, ['Reembolso processado']]
+      puts "[FINANCE] Reembolso agregado com sucesso para a família #{product_family} no mês de #{refund_month}."
+      return [200, {}, ['Reembolso agregado com sucesso']]
 
     when 'customer.subscription.created'
       subscription_data = event['data']['object']
