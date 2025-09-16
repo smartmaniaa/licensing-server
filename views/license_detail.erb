@@ -164,15 +164,12 @@
                 <td><%= entitlement['origin'] %></td>
                 <td><code><%= entitlement['platform_subscription_id'] || 'N/A' %></code></td>
                 <td class="revenue-value">
-                  <%
-                    financial_data = @financials[entitlement['platform_subscription_id']]
-                    if financial_data
-                      formatted_revenue = sprintf('%s %.2f', financial_data["currency"].upcase == 'USD' ? 'US$' : 'R$', financial_data["total"] / 100.0)
-                      out << formatted_revenue
-                    else
-                      out << "---"
-                    end
-                  %>
+                  <% financial_data = @financials[entitlement['platform_subscription_id']] %>
+                  <% if financial_data %>
+                    <%= sprintf('%s %.2f', financial_data["currency"].upcase == 'USD' ? 'US$' : 'R$', financial_data["total"] / 100.0) %>
+                  <% else %>
+                    ---
+                  <% end %>
                 </td>
                 <td>
                   <form action="/admin/entitlement/<%= entitlement['id'] %>/delete" method="post" onsubmit="return confirm('Tem certeza?');" style="margin:0;">
