@@ -133,8 +133,26 @@ module StripeHandler
       end
       return [200, {}, ['Atualização de assinatura processada']]
 
-# --- WEBHOOKS DE PAGAMENTO (RENOVAÇÃO E CRIAÇÃO) ---
+
+    # --- WEBHOOKS DE PAGAMENTO (RENOVAÇÃO E CRIAÇÃO) ---
     when 'invoice.paid', 'invoice.payment_succeeded'
+      invoice_data = event['data']['object']
+      subscription_id = invoice_data['subscription']
+      billing_reason = invoice_data['billing_reason']
+      
+      # --- CORREÇÃO FINAL E MAIS ROBUSTA ---
+      # Verificamos explicitamente se é uma String antes de tentar limpá-la.
+      # Isso torna a comparação à prova de caracteres invisíveis e outros problemas de formatação.
+      if subscription_id && billing_reason.is_a?(String) && billing_reason.strip == 'subscription_cycle'
+        # O campo 'period_end' dentro do objeto da fatura indica a nova data de validade.
+        new_expires_at = Time.at(invoice_data['period_end'])
+        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active', new_expires_at: new_expires_at)
+        puts "[STRIPE] Sucesso: RENOVAÇÃO CONFIRMADA para Assinatura #{subscription_id}. Nova validade: #{new_expires_at}."
+      else
+        # Log aprimorado para ajudar a depurar futuros problemas.
+        puts "[STRIPE] Info: Evento de pagamento ignorado. Motivo recebido: '#{billing_reason}' (Tipo: #{billing_reason.class}). Condição para renovação não atendida."
+      end
+      return [200, {}, ['Evento de pagamento processado']]
       invoice_data = event['data']['object']
       subscription_id = invoice_data['subscription']
       
