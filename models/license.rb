@@ -229,8 +229,16 @@ class License
     body.gsub!('{{family_homepage_url}}', email_data['homepage_url'] || '#')
     body.gsub!('{{family_support_email}}', email_data['support_email'] || 'suporte@maniaa.com.br')
     
-    # Removemos a variável de logo que não é mais usada
-    # body.gsub!('{{family_logo_url}}', email_data['logo_url'] || '') 
+    if body.include?('{{product_download_link}}') && !granted_skus.empty?
+  download_link_result = $db.exec_params(
+    "SELECT download_link FROM products WHERE sku = $1 LIMIT 1",
+    [granted_skus.first]
+  ).first
+  
+  download_link = download_link_result && download_link_result['download_link'] ? download_link_result['download_link'] : '#'
+  body.gsub!('{{product_download_link}}', download_link)
+end
+ 
 
     if body.include?('{{granted_products_list}}') && !granted_skus.empty?
       product_names_result = $db.exec_params(

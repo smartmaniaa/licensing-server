@@ -50,6 +50,12 @@
         <input type="text" id="latest_version" name="latest_version" value="<%= @product['latest_version'] %>">
       </div>
 
+      <div class="form-group">
+  <label for="download_link">Link de Download do Produto</label>
+  <input type="text" id="download_link" name="download_link" value="<%= @product['download_link'] %>">
+  <p class="help-text">Link direto para o instalador ou página de download. Variável de e-mail: <code>{{product_download_link}}</code></p>
+</div>
+
       <h4>Informações da Plataforma (Stripe)</h4>
       <div class="form-group">
         <label for="platform_id">ID de Preço do Stripe</label>

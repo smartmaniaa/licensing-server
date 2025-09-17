@@ -10,31 +10,31 @@ class Product
     result.num_tuples > 0 ? result[0] : nil
   end
 
-  def self.create(sku:, name:, family:, latest_version:)
-    begin
-      $db.exec_params(
-        'INSERT INTO products (sku, name, family, latest_version) VALUES ($1, $2, $3, $4)',
-        [sku, name, family, latest_version]
-      )
-      return true
-    rescue PG::UniqueViolation => e
-      puts "[VALIDATION ERROR] Tentativa de criar produto com SKU ou Nome duplicado: #{e.message}"
-      return false
-    end
+def self.create(sku:, name:, family:, latest_version:, download_link:)
+  begin
+    $db.exec_params(
+      'INSERT INTO products (sku, name, family, latest_version, download_link) VALUES ($1, $2, $3, $4, $5)',
+      [sku, name, family, latest_version, download_link]
+    )
+    return true
+  rescue PG::UniqueViolation => e
+    puts "[VALIDATION ERROR] Tentativa de criar produto com SKU ou Nome duplicado: #{e.message}"
+    return false
   end
+end
 
-  def self.update(sku:, name:, family:, latest_version:)
-    begin
-      $db.exec_params(
-        'UPDATE products SET name = $1, family = $2, latest_version = $3 WHERE sku = $4',
-        [name, family, latest_version, sku]
-      )
-      return true
-    rescue PG::UniqueViolation => e
-      puts "[VALIDATION ERROR] Tentativa de atualizar para um Nome que já existe: #{e.message}"
-      return false
-    end
+def self.update(sku:, name:, family:, latest_version:, download_link:)
+  begin
+    $db.exec_params(
+      'UPDATE products SET name = $1, family = $2, latest_version = $3, download_link = $4 WHERE sku = $5',
+      [name, family, latest_version, download_link, sku]
+    )
+    return true
+  rescue PG::UniqueViolation => e
+    puts "[VALIDATION ERROR] Tentativa de atualizar para um Nome que já existe: #{e.message}"
+    return false
   end
+end
 
   def self.delete(sku)
     $db.exec_params('DELETE FROM products WHERE sku = $1', [sku])

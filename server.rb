@@ -164,7 +164,7 @@ class SmartManiaaApp < Sinatra::Base
     { license_key: key, status: "trial_started", expires_at: expires_at }.to_json
   end
 
-  post '/validate' do
+post '/validate' do
     content_type :json
     begin
       params = JSON.parse(request.body.read)
@@ -206,9 +206,8 @@ class SmartManiaaApp < Sinatra::Base
       return { status: 'invalid', message: "Chave já vinculada a outro computador." }.to_json
     end
     
-    # --- NOVA LÓGICA DE VERIFICAÇÃO DE VERSÃO ---
+    # --- NOVA LÓGICA DE VERIFICAÇÃO DE VERSÃO E LINK ---
     product_info = Product.find(sku)
-    family_info = $db.exec_params("SELECT download_page_url FROM product_family_info WHERE family_name = $1", [product_info['family']]).first
     
     update_available = false
     latest_version = product_info['latest_version']
@@ -220,13 +219,12 @@ class SmartManiaaApp < Sinatra::Base
     # Monta a resposta final
     response = {
       status: 'valid',
-      message: 'Licença válida.',
-      update_available: update_available
+      message: 'Licença válida.'
     }
     
     if update_available
       response[:latest_version] = latest_version
-      response[:update_url] = family_info ? family_info['download_page_url'] : nil
+      response[:update_url] = product_info['download_link']
     end
 
     response.to_json
@@ -281,36 +279,35 @@ class SmartManiaaApp < Sinatra::Base
     erb :admin_new_product
   end
 
-  post '/admin/products' do
-    protected!
-    success = Product.create(
-      sku: params['sku'], 
-      name: params['name'], 
-      family: params['family'],
-      latest_version: params['latest_version']
-    )
-    if success
-      new_family = params['family']
-      admin_email = Mailer::ADMIN_EMAIL
-      notifiers_exist_result = $db.exec_params("SELECT 1 FROM admin_notifiers WHERE family_name = $1 LIMIT 1", [new_family])
-      if notifiers_exist_result.num_tuples.zero?
-        $db.exec_params(
-          "INSERT INTO admin_notifiers (email, family_name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-          [admin_email, new_family]
-        )
-        puts "[ADMIN] Família '#{new_family}' detectada como nova. Notificador padrão '#{admin_email}' adicionado."
-      end
-
-      Product.save_platform_product(
-        sku: params['sku'], platform: 'stripe', platform_id: params['platform_id'], link: params['purchase_link']
+post '/admin/products' do
+  protected!
+  success = Product.create(
+    sku: params['sku'], 
+    name: params['name'], 
+    family: params['family'],
+    latest_version: params['latest_version'],
+    download_link: params['download_link'] # Adicione esta linha
+  )
+  if success
+    new_family = params['family']
+    admin_email = Mailer::ADMIN_EMAIL
+    notifiers_exist_result = $db.exec_params("SELECT 1 FROM admin_notifiers WHERE family_name = $1 LIMIT 1", [new_family])
+    if notifiers_exist_result.num_tuples.zero?
+      $db.exec_params(
+        "INSERT INTO admin_notifiers (email, family_name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        [admin_email, new_family]
       )
-      $db.exec_params("UPDATE products SET stripe_price_id = $1 WHERE sku = $2", [params['platform_id'], params['sku']])
-      redirect '/admin/products'
-    else
-      session[:error] = "Falha ao criar o produto. O SKU ou o Nome do Produto já existem."
-      redirect '/admin/products/new'
+      puts "[ADMIN] Família '#{new_family}' detectada como nova. Notificador padrão '#{admin_email}' adicionado."
     end
+    Product.save_platform_product(
+      sku: params['sku'], platform: 'stripe', platform_id: params['platform_id'], link: params['purchase_link']
+    )
+    redirect '/admin/products'
+  else
+    session[:error] = "Falha ao criar o produto. O SKU ou o Nome do Produto já existem."
+    redirect '/admin/products/new'
   end
+end
 
   get '/admin/product/:sku/edit' do
     protected!
@@ -323,21 +320,21 @@ class SmartManiaaApp < Sinatra::Base
     erb :admin_edit_product
   end
 
-  post '/admin/product/:sku' do
-    protected!
-    product_sku = params['sku']
-    Product.update(
-      sku: product_sku, 
-      name: params['name'], 
-      family: params['family'],
-      latest_version: params['latest_version']
-    )
-    Product.save_platform_product(sku: product_sku, platform: 'stripe', platform_id: params['platform_id'], link: params['purchase_link'])
-    $db.exec_params("UPDATE products SET stripe_price_id = $1 WHERE sku = $2", [params['platform_id'], product_sku])
-    component_skus = params['component_skus'] || []
-    Product.update_suite_components(suite_sku: product_sku, component_skus: component_skus)
-    redirect '/admin/products'
-  end
+post '/admin/product/:sku' do
+  protected!
+  product_sku = params['sku']
+  Product.update(
+    sku: product_sku, 
+    name: params['name'], 
+    family: params['family'],
+    latest_version: params['latest_version'],
+    download_link: params['download_link'] # Adicione esta linha
+  )
+  Product.save_platform_product(sku: product_sku, platform: 'stripe', platform_id: params['platform_id'], link: params['purchase_link'])
+  component_skus = params['component_skus'] || []
+  Product.update_suite_components(suite_sku: product_sku, component_skus: component_skus)
+  redirect '/admin/products'
+end
 
   post '/admin/product/:sku/delete' do
     protected!
