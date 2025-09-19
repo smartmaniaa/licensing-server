@@ -40,7 +40,8 @@ module StripeHandler
   
   private
 
-  def self.process_event(event)
+
+def self.process_event(event)
     event_type = event['type']
     event_id = event['id']
     puts "[STRIPE] Webhook processando: Tipo '#{event_type}', ID '#{event_id}'"
@@ -109,7 +110,6 @@ module StripeHandler
             payload_details: event
           }
         )
-
         self.record_financial_transaction({
           'amount_paid' => -amount_refunded,
           'currency' => currency,
@@ -158,13 +158,28 @@ module StripeHandler
             return [500, {}, ['Dados da assinatura incompletos do Stripe']]
         end
         expires_at = Time.at(period_end_timestamp)
-        _license_id, key, _was_new = License.provision_license(
+        license_id, key, _was_new = License.provision_license(
           email: customer_email, family: family, product_skus: product_skus, origin: 'stripe',
           grant_source: "stripe_sub:#{subscription_id}", status: 'active', expires_at: expires_at,
           trial_expires_at: nil, platform_subscription_id: subscription_id,
           locale: customer_locale, stripe_customer_id: subscription_data['customer'], phone: customer_phone
         )
         puts "[STRIPE] Sucesso: Direito de uso provisionado para '#{customer_email}' com validade até #{expires_at}."
+        
+        # --- LOG PARA AUDITORIA ---
+        License.log_platform_event(
+          event_type: 'provision',
+          license_id: license_id,
+          email: customer_email,
+          product_sku: product_skus.join(','),
+          source_system: 'stripe_webhook',
+          details: {
+            platform_customer_id: subscription_data['customer'],
+            platform_subscription_id: subscription_id,
+            new_status: 'active',
+            payload_details: event
+          }
+        )
       rescue => e
         puts "‼️ ERRO inesperado ao processar customer.subscription.created: #{e.class} - #{e.message}\n#{e.backtrace.join("\n")}"
         return [500, {}, ['Erro interno ao provisionar direito de uso']]
@@ -175,31 +190,66 @@ module StripeHandler
       subscription_data = event['data']['object']
       subscription_id = subscription_data['id']
       previous_attributes = event['data']['previous_attributes']
+      
+      entitlement_info = $db.exec_params("SELECT id, status FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
+      unless entitlement_info
+        puts "ALERTA: Entitlement para assinatura #{subscription_id} não encontrado."
+        return [200, {}, ['Entitlement não encontrado']]
+      end
+      
+      old_status = entitlement_info['status']
+      new_status = old_status
 
       if !subscription_data['cancel_at'].nil?
+        new_status = 'pending_cancellation'
         cancel_date = Time.at(subscription_data['cancel_at'])
-        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'pending_cancellation', new_expires_at: cancel_date)
+        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: new_status, new_expires_at: cancel_date)
         puts "[STRIPE] Ação: Cancelamento para data específica processado para #{subscription_id}."
       elsif subscription_data['cancel_at_period_end'] == true
-        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'pending_cancellation')
+        new_status = 'pending_cancellation'
+        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: new_status)
         puts "[STRIPE] Ação: Cancelamento no fim do período processado para #{subscription_id}."
       
       elsif subscription_data['cancel_at_period_end'] == false && subscription_data['cancel_at'].nil? && previous_attributes && (previous_attributes['cancel_at_period_end'] == true || !previous_attributes['cancel_at'].nil?)
+        new_status = 'active'
         new_expires_at = Time.at(subscription_data['items']['data'][0]['current_period_end'])
-        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active', new_expires_at: new_expires_at)
+        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: new_status, new_expires_at: new_expires_at)
         puts "[STRIPE] Ação: Reativação de assinatura processada para #{subscription_id}."
 
       elsif previous_attributes && previous_attributes.dig('items', 'data', 0, 'current_period_end')
-        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'awaiting_payment')
+        new_status = 'awaiting_payment'
+        License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: new_status)
         puts "[STRIPE] Ação: Renovação detectada para #{subscription_id}. Status alterado para 'awaiting_payment'."
       else
         puts "[STRIPE] Info: Evento 'customer.subscription.updated' não resultou em ação (sem mudança relevante)."
+      end
+
+      # --- LOG PARA AUDITORIA ---
+      if old_status != new_status
+        license_info = $db.exec_params("SELECT id, email FROM licenses WHERE stripe_customer_id = $1 LIMIT 1", [subscription_data['customer']]).first
+        if license_info
+          License.log_platform_event(
+            event_type: 'status_change',
+            license_id: license_info['id'],
+            email: license_info['email'],
+            product_sku: nil,
+            source_system: 'stripe_webhook',
+            details: {
+              platform_customer_id: subscription_data['customer'],
+              platform_subscription_id: subscription_id,
+              previous_status: old_status,
+              new_status: new_status,
+              payload_details: event
+            }
+          )
+        end
       end
       return [200, {}, ['Atualização de assinatura processada']]
 
     when 'invoice.paid', 'invoice.payment_succeeded'
       invoice_data = event['data']['object']
       
+      # REGISTRA A TRANSAÇÃO FINANCEIRA
       record_financial_transaction(invoice_data)
 
       billing_reason = invoice_data['billing_reason']&.strip
@@ -211,6 +261,27 @@ module StripeHandler
         if subscription_id && period_end_timestamp
           puts "[STRIPE] Processando RENOVAÇÃO para a assinatura: #{subscription_id}."
           new_expires_at = Time.at(period_end_timestamp)
+          
+          # --- LOG PARA AUDITORIA ---
+          entitlement_info = $db.exec_params("SELECT id, status FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
+          license_info = $db.exec_params("SELECT id, email FROM licenses WHERE stripe_customer_id = $1 LIMIT 1", [invoice_data['customer']]).first
+          if entitlement_info && license_info
+            License.log_platform_event(
+              event_type: 'renewal',
+              license_id: license_info['id'],
+              email: license_info['email'],
+              product_sku: nil, # Pode ser buscado na fatura se necessário
+              source_system: 'stripe_webhook',
+              details: {
+                platform_customer_id: invoice_data['customer'],
+                platform_subscription_id: subscription_id,
+                previous_status: entitlement_info['status'],
+                new_status: 'active',
+                payload_details: event
+              }
+            )
+          end
+
           result = License.update_entitlement_from_stripe(
             subscription_id: subscription_id, 
             new_status: 'active', 
@@ -242,6 +313,33 @@ module StripeHandler
     when 'customer.subscription.deleted'
       subscription = event['data']['object']
       subscription_id = subscription['id']
+      
+      entitlement_info = $db.exec_params("SELECT id, status FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
+      unless entitlement_info
+        puts "ALERTA: Entitlement para assinatura #{subscription_id} não encontrado."
+        return [200, {}, ['Entitlement não encontrado']]
+      end
+      
+      license_info = $db.exec_params("SELECT id, email FROM licenses WHERE stripe_customer_id = $1 LIMIT 1", [subscription['customer']]).first
+
+      # --- LOG PARA AUDITORIA ---
+      if license_info
+        License.log_platform_event(
+          event_type: 'cancellation',
+          license_id: license_info['id'],
+          email: license_info['email'],
+          product_sku: nil,
+          source_system: 'stripe_webhook',
+          details: {
+            platform_customer_id: subscription['customer'],
+            platform_subscription_id: subscription_id,
+            previous_status: entitlement_info['status'],
+            new_status: 'revoked',
+            payload_details: event
+          }
+        )
+      end
+
       result = License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'revoked')
       if result.cmd_tuples.zero?
         SmartManiaaApp.log_event(level: 'warning', source: 'stripe_webhook', message: "Recebido evento de cancelamento para assinatura não encontrada no BD: #{subscription_id}")
