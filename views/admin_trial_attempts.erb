@@ -2,7 +2,7 @@
 <html lang="pt-br">
 <head>
   <meta charset="UTF-8">
-  <title>Tentativas de Trial Negadas - SmartManiaa</title>
+  <title>Logs de Tentativas de Trial Negadas - SmartManiaa</title>
   <style>
     /* Estilos da página */
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 2em; background-color: #f4f6f8; color: #333; }
@@ -21,24 +21,8 @@
   
   <script>
     function exportCsv() {
-      let rows = Array.from(document.querySelectorAll("#attempts-table tbody tr"));
-      if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector("td[colspan]"))) {
-        alert("Não há dados para exportar.");
-        return;
-      }
-      let csvContent = "data:text/csv;charset=utf-8," +
-        "Email,MAC Address,Produto Tentado,Motivo da Falha,Data\n" +
-        rows.map(row =>
-          Array.from(row.querySelectorAll('td')).map(td => `"${td.innerText.replace(/"/g, '""')}"`).join(',')
-        ).join('\n');
-      
-      var encodedUri = encodeURI(csvContent);
-      var link = document.createElement("a");
-      link.setAttribute("href", encodedUri);
-      link.setAttribute("download", "tentativas_trial_negadas.csv");
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      // Lógica de exportação pode ser implementada se necessário, mas por enquanto o link direto para a rota de exportação é mais simples.
+      window.location.href = '/admin/audit_log/export.csv?event_type=trial_denied';
     }
   </script>
 </head>
@@ -64,7 +48,8 @@
     <div style="clear:both"></div>
     <p>Esta lista mostra todos os usuários que tentaram iniciar um trial mas foram bloqueados.</p>
     
-    <table id="attempts-table"> <thead>
+    <table id="attempts-table">
+      <thead>
         <tr>
           <th>Email</th>
           <th>MAC Address</th>
@@ -74,18 +59,19 @@
         </tr>
       </thead>
       <tbody>
-        <% if @attempts.num_tuples.zero? %>
+        <% if @attempts.empty? %>
           <tr>
             <td colspan="5" style="text-align: center;">Nenhuma tentativa de trial negada foi registrada.</td>
           </tr>
         <% else %>
           <% @attempts.each do |attempt| %>
+            <% details = JSON.parse(attempt['details']) %>
             <tr>
               <td><%= attempt['email'] %></td>
-              <td><%= attempt['mac_address'] %></td>
-              <td><%= attempt['product_sku'] %></td>
-              <td><%= attempt['reason'] %></td>
-              <td><%= Time.parse(attempt['attempted_at']).strftime('%d/%m/%Y %H:%M') %></td>
+              <td><%= details['mac_address'] %></td>
+              <td><%= details['product_sku'] %></td>
+              <td><%= details['reason'] %></td>
+              <td><%= Time.parse(attempt['recorded_at']).strftime('%d/%m/%Y %H:%M') %></td>
             </tr>
           <% end %>
         <% end %>

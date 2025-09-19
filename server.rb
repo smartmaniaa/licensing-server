@@ -441,28 +441,13 @@ get '/admin/license/:id' do
      FROM license_entitlements le JOIN products p ON le.product_sku = p.sku
      WHERE le.license_id = $1 ORDER BY le.id DESC", 
     [license_id]
-  ).to_a # Convertendo para array para facilitar o uso
-  
-  # --- INÍCIO DA NOVA LÓGICA ---
-  # 1. Pega todos os IDs de assinatura únicos desta licença
-  subscription_ids = @entitlements.map { |e| e['platform_subscription_id'] }.compact.uniq
+  ).to_a 
 
-  # 2. Busca os dados financeiros para essas assinaturas
-  @financials = {}
-  if !subscription_ids.empty?
-    financial_results = $db.exec_params(
-      "SELECT stripe_subscription_id, gross_revenue_accumulated, currency FROM subscription_financials WHERE stripe_subscription_id = ANY($1)",
-      ["{#{subscription_ids.join(',')}}"]
-    )
-
-    # 3. Formata os resultados no hash que a view espera
-    financial_results.each do |row|
-      @financials[row['stripe_subscription_id']] = {
-        "total" => row['gross_revenue_accumulated'].to_i,
-        "currency" => row['currency']
-      }
-    end
-  end
+  # --- INÍCIO DA NOVA LÓGICA: BALANÇO POR CHAVE ---
+  @financial_summary = $db.exec_params(
+    "SELECT gross_revenue_by_currency FROM license_financial_summary WHERE license_id = $1",
+    [license_id]
+  ).first
   # --- FIM DA NOVA LÓGICA ---
 
   erb :license_detail

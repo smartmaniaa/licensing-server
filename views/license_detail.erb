@@ -7,7 +7,6 @@
     /* Estilos Gerais */
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 2em; background-color: #f4f6f8; color: #333; }
     
-    /* ===== ALTERAÇÃO AQUI ===== */
     .container { max-width: 1100px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
     
     h1, h2 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
@@ -47,7 +46,7 @@
     .status-pending_cancellation { color: #f39c12; font-weight: bold; }
     .status-expired { color: #7f8c8d; font-weight: bold; }
     .status-awaiting_payment { color: #8e44ad; font-weight: bold; }
-    .revenue-value { color: #27ae60; font-weight: bold; }
+    .revenue-value { font-weight: bold; }
 
 
     /* Estilos para o Modal (Popup) */
@@ -121,6 +120,34 @@
         </tbody>
       </table>
 
+      <!-- INÍCIO DA NOVA SEÇÃO DE BALANÇO FINANCEIRO -->
+      <h2>Balanço Financeiro</h2>
+      <table class="info-table">
+        <tbody>
+          <% if @financial_summary %>
+            <%
+              financials_by_currency = JSON.parse(@financial_summary['gross_revenue_by_currency'])
+              financials_by_currency.each do |currency, amount|
+            %>
+              <tr>
+                <td class="label">Receita Total (<%= currency.upcase %>):</td>
+                <td class="value revenue-value">
+                  <%= sprintf('%s %.2f', currency.upcase == 'USD' ? 'US$' : 'R$', amount / 100.0) %>
+                </td>
+                <td class="actions"></td>
+              </tr>
+            <% end %>
+          <% else %>
+            <tr>
+              <td class="label">Receita Total:</td>
+              <td class="value">Nenhuma transação financeira registrada.</td>
+              <td class="actions"></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+      <!-- FIM DA NOVA SEÇÃO -->
+
       <h2>Direitos de Uso (Entitlements)</h2>
       <table class="entitlements-table">
         <thead>
@@ -130,13 +157,12 @@
             <th>Validade</th>
             <th>Origem</th>
             <th>ID</th>
-            <th>Receita</th>
             <th>Ações</th>
           </tr>
         </thead>
         <tbody>
           <% if @entitlements.empty? %>
-            <tr><td colspan="7" style="text-align: center;">Nenhum direito de uso encontrado.</td></tr>
+            <tr><td colspan="6" style="text-align: center;">Nenhum direito de uso encontrado.</td></tr>
           <% else %>
             <% @entitlements.each do |entitlement| %>
               <%
@@ -164,14 +190,6 @@
                 </td>
                 <td><%= entitlement['origin'] %></td>
                 <td><code><%= entitlement['platform_subscription_id'] || 'N/A' %></code></td>
-                <td class="revenue-value">
-                  <% financial_data = @financials[entitlement['platform_subscription_id']] %>
-                  <% if financial_data %>
-                    <%= sprintf('%s %.2f', financial_data["currency"].upcase == 'USD' ? 'US$' : 'R$', financial_data["total"] / 100.0) %>
-                  <% else %>
-                    ---
-                  <% end %>
-                </td>
                 <td>
                   <form action="/admin/entitlement/<%= entitlement['id'] %>/delete" method="post" onsubmit="return confirm('Tem certeza?');" style="margin:0;">
                     <input type="hidden" name="license_id" value="<%= @license['id'] %>">

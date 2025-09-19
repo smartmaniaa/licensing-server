@@ -137,9 +137,24 @@ class License
     $db.exec('SELECT * FROM trial_attempts ORDER BY attempted_at DESC')
   end
 
-  def self.log_trial_denied(email:, mac_address:, product_sku:, reason:)
-    $db.exec_params("INSERT INTO trial_attempts (email, mac_address, product_sku, reason, attempted_at) VALUES ($1, $2, $3, $4, NOW())", [email, mac_address, product_sku, reason])
-  end
+  # NO ARQUIVO models/license.rb
+# Método refatorado para usar a nova tabela de auditoria
+def self.log_trial_denied(email:, mac_address:, product_sku:, reason:)
+  license_id_result = $db.exec_params("SELECT id FROM licenses WHERE (lower(email) = lower($1) OR mac_address = $2) AND family = (SELECT family FROM products WHERE sku = $3) LIMIT 1", [email, mac_address, product_sku]).first
+  
+  License.log_platform_event(
+    event_type: 'trial_denied',
+    license_id: license_id_result ? license_id_result['id'].to_i : nil,
+    email: email,
+    product_sku: product_sku,
+    source_system: 'start_trial_route',
+    details: {
+      reason: reason,
+      mac_address: mac_address,
+      product_sku: product_sku
+    }
+  )
+end
 
   def self.generate_key_for_family(family_name)
     prefix = family_name.upcase.gsub(/[^A-Z0-9]/, '')
