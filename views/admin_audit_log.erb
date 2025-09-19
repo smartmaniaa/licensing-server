@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Logs de Auditoria - SmartManiaa</title>
+  <style>
+    body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; margin:2em; background:#f4f6f8; color:#333; }
+    .container { max-width: 1300px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
+    h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+    .header-btns { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5em; }
+    .back-link { color: #3498db; text-decoration: none; }
+    .btn { background-color: #28a745; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; font-size: 14px; }
+    .btn-secondary { background-color: #7f8c8d; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1em; }
+    th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; word-break: break-all; font-size: 0.9em; }
+    th { background-color: #34495e; color: white; }
+    .log-info { font-size: 0.9em; color: #7f8c8d; }
+    pre { white-space: pre-wrap; word-wrap: break-word; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header-btns">
+      <a href="/admin" class="back-link">&larr; Voltar ao Painel Principal</a>
+      <a href="/admin/audit_log/export.csv" class="btn btn-secondary">Exportar Tudo para CSV</a>
+    </div>
+    <h1>Logs de Auditoria de Eventos</h1>
+    <p>Detalhes de todos os eventos de licenças e pagamentos registrados no sistema.</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Data/Hora</th>
+          <th>Tipo</th>
+          <th>ID da Licença</th>
+          <th>SKU</th>
+          <th>Status</th>
+          <th>Valor</th>
+          <th>Origem</th>
+          <th>Detalhes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% @events.each do |event| %>
+          <tr>
+            <td class="log-info"><%= Time.parse(event['recorded_at']).strftime('%d/%m/%Y %H:%M:%S') %></td>
+            <td><%= event['event_type'] %></td>
+            <td><%= event['license_id'] %></td>
+            <td><%= event['product_sku'] %></td>
+            <td><%= event['new_status'] %></td>
+            <td>
+              <% if event['amount_cents'] %>
+                <%= sprintf('%s %.2f', event['currency'].upcase == 'USD' ? 'US$' : 'R$', event['amount_cents'] / 100.0) %>
+              <% else %>
+                ---
+              <% end %>
+            </td>
+            <td><%= event['source_system'] %></td>
+            <td>
+              <pre><%= event['payload_details'] %></pre>
+            </td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

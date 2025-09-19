@@ -521,6 +521,26 @@ end
     redirect '/admin/trials'
   end
 
+  # --- ROTAS PARA AUDITORIA DE EVENTOS ---
+  get '/admin/audit_log' do
+    protected!
+    @events = $db.exec("SELECT * FROM platform_license_events_audit ORDER BY recorded_at DESC LIMIT 1000")
+    erb :admin_audit_log
+  end
+
+  get '/admin/audit_log/export.csv' do
+    protected!
+    events = $db.exec("SELECT * FROM platform_license_events_audit ORDER BY recorded_at DESC")
+    content_type 'text/csv'
+    headers 'Content-Disposition' => "attachment; filename=\"log_auditoria_smartmaniaa_#{Time.now.strftime('%Y%m%d')}.csv\""
+    CSV.generate do |csv|
+      csv << events.fields # Cabeçalhos
+      events.each do |event|
+        csv << event.values # Valores das linhas
+      end
+    end
+  end
+
   # --- ROTAS DO CENTRO DE CONTROLE DA FAMÍLIA ---
   get '/admin/families' do
     protected!
