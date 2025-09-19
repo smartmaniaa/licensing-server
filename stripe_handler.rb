@@ -2,7 +2,7 @@
 require 'stripe'
 require 'json'
 require 'time'
-require 'pg' # Adicionado, caso não esteja no server.rb
+require 'pg'
 
 module StripeHandler
   Stripe.api_key = ENV['STRIPE_API_KEY']
@@ -40,8 +40,7 @@ module StripeHandler
   
   private
 
-
-def self.process_event(event)
+  def self.process_event(event)
     event_type = event['type']
     event_id = event['id']
     puts "[STRIPE] Webhook processando: Tipo '#{event_type}', ID '#{event_id}'"
@@ -110,6 +109,8 @@ def self.process_event(event)
             payload_details: event
           }
         )
+        
+        # Chama o método de registro financeiro com o valor NEGATIVO do reembolso
         self.record_financial_transaction({
           'amount_paid' => -amount_refunded,
           'currency' => currency,
@@ -305,8 +306,28 @@ def self.process_event(event)
 
       if subscription_id
         puts "[STRIPE] ALERTA: Falha no pagamento da renovação para a assinatura #{subscription_id}."
+        
+        # --- LOG PARA AUDITORIA ---
+        entitlement_info = $db.exec_params("SELECT id, status FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
+        license_info = $db.exec_params("SELECT id, email FROM licenses WHERE stripe_customer_id = $1 LIMIT 1", [invoice_data['customer']]).first
+        if entitlement_info && license_info
+          License.log_platform_event(
+            event_type: 'status_change',
+            license_id: license_info['id'],
+            email: license_info['email'],
+            product_sku: nil,
+            source_system: 'stripe_webhook',
+            details: {
+              platform_customer_id: invoice_data['customer'],
+              platform_subscription_id: subscription_id,
+              previous_status: entitlement_info['status'],
+              new_status: 'active', # O status permanece 'active' até o cancelamento
+              payload_details: event
+            }
+          )
+        end
+        
         License.update_entitlement_from_stripe(subscription_id: subscription_id, new_status: 'active')
-        SmartManiaaApp.log_event(level: 'warning', source: 'stripe_webhook', message: "Falha no pagamento da fatura para a assinatura #{subscription_id}", details: event)
       end
       return [200, {}, ['Falha de pagamento processada']]
 
@@ -353,5 +374,4 @@ def self.process_event(event)
       return [200, {}, ['Evento não tratado']]
     end
   end
-
 end
