@@ -256,7 +256,6 @@ module StripeHandler
     when 'invoice.paid', 'invoice.payment_succeeded'
       invoice_data = event['data']['object']
       
-      # REGISTRA A TRANSAÇÃO FINANCEIRA
       record_financial_transaction(invoice_data)
 
       billing_reason = invoice_data['billing_reason']&.strip
@@ -269,7 +268,6 @@ module StripeHandler
           puts "[STRIPE] Processando RENOVAÇÃO para a assinatura: #{subscription_id}."
           new_expires_at = Time.at(period_end_timestamp)
           
-          # --- LOG PARA AUDITORIA ---
           entitlement_info = $db.exec_params("SELECT id, status FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
           license_info = $db.exec_params("SELECT id, email FROM licenses WHERE stripe_customer_id = $1 LIMIT 1", [invoice_data['customer']]).first
           if entitlement_info && license_info
@@ -277,7 +275,7 @@ module StripeHandler
               event_type: 'renewal',
               license_id: license_info['id'],
               email: license_info['email'],
-              product_sku: nil, # Pode ser buscado na fatura se necessário
+              product_sku: nil,
               source_system: 'stripe_webhook',
               details: {
                 platform_customer_id: invoice_data['customer'],
@@ -313,7 +311,6 @@ module StripeHandler
       if subscription_id
         puts "[STRIPE] ALERTA: Falha no pagamento da renovação para a assinatura #{subscription_id}."
         
-        # --- LOG PARA AUDITORIA ---
         entitlement_info = $db.exec_params("SELECT id, status FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
         license_info = $db.exec_params("SELECT id, email FROM licenses WHERE stripe_customer_id = $1 LIMIT 1", [invoice_data['customer']]).first
         if entitlement_info && license_info
@@ -327,7 +324,7 @@ module StripeHandler
               platform_customer_id: invoice_data['customer'],
               platform_subscription_id: subscription_id,
               previous_status: entitlement_info['status'],
-              new_status: 'active', # O status permanece 'active' até o cancelamento
+              new_status: 'active',
               payload_details: event
             }
           )
@@ -349,7 +346,6 @@ module StripeHandler
       
       license_info = $db.exec_params("SELECT id, email FROM licenses WHERE stripe_customer_id = $1 LIMIT 1", [subscription['customer']]).first
 
-      # --- LOG PARA AUDITORIA ---
       if license_info
         License.log_platform_event(
           event_type: 'cancellation',
