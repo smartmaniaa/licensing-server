@@ -62,16 +62,19 @@
         <th>Chave de Licença</th>
         <th>Status</th>
         <th>Origem (Ativas)</th>
+        <th>Receita (USD)</th>
+        <th>Receita (BRL)</th>
         <th>Data de Criação</th>
       </tr>
     </thead>
     <tbody>
       <% if @licenses.num_tuples.zero? %>
         <tr>
-          <td colspan="5" style="text-align: center;">Nenhuma licença encontrada.</td>
+          <td colspan="7" style="text-align: center;">Nenhuma licença encontrada.</td>
         </tr>
       <% else %>
         <% @licenses.each do |license| %>
+          <% financials = @financials_by_license[license['id'].to_i] || {} %>
           <tr>
             <td>
               <%= license['email'] %>
@@ -87,6 +90,14 @@
             </td>
             <td>
               <%= license['summary_origins'] %>
+            </td>
+            <td>
+              <% usd_amount = financials['usd'] || 0 %>
+              <%= sprintf('US$ %.2f', usd_amount / 100.0) %>
+            </td>
+            <td>
+              <% brl_amount = financials['brl'] || 0 %>
+              <%= sprintf('R$ %.2f', brl_amount / 100.0) %>
             </td>
             <td><%= Time.parse(license['created_at']).strftime('%d/%m/%Y %H:%M') %></td>
           </tr>

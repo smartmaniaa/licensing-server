@@ -259,11 +259,19 @@ post '/validate' do
   end
 
   # --- ROTAS DO PAINEL DE ADMIN ---
-  get '/admin' do
-    protected!
-    @licenses = License.all_with_summary
-    erb :admin_dashboard
+get '/admin' do
+  protected!
+  @licenses = License.all_with_summary
+  
+  # --- INÍCIO DA NOVA LÓGICA: BALANÇO FINANCEIRO ---
+  @financials_by_license = {}
+  $db.exec("SELECT license_id, gross_revenue_by_currency FROM license_financial_summary").each do |row|
+    @financials_by_license[row['license_id'].to_i] = JSON.parse(row['gross_revenue_by_currency'])
   end
+  # --- FIM DA NOVA LÓGICA ---
+  
+  erb :admin_dashboard
+end
 
   # --- ROTAS DE GERENCIAMENTO DE PRODUTOS ---
   get '/admin/products' do
