@@ -502,10 +502,14 @@ end
 
   # --- ROTAS DE GERENCIAMENTO DE TRIALS ---
   get '/admin/trials' do
-    protected!
-    @attempts = License.all_trial_attempts
-    erb :admin_trial_attempts
-  end
+  protected!
+  @attempts = $db.exec(%q{
+    SELECT * FROM platform_license_events_audit
+    WHERE event_type = 'trial_denied'
+    ORDER BY recorded_at DESC
+  })
+  erb :admin_trial_attempts
+end
   
   post '/admin/trials/clear' do
     protected!
