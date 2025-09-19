@@ -280,4 +280,43 @@ end
     )
   end
 
+  # Adicione este método à classe License
+def self.log_platform_event(event_type:, license_id:, email:, product_sku:, source_system:, details:)
+    $db.exec_params(
+      %q{
+        INSERT INTO platform_license_events_audit (
+          event_type,
+          license_id,
+          email,
+          product_sku,
+          source_system,
+          platform_customer_id,
+          platform_subscription_id,
+          platform_invoice_id,
+          amount_cents,
+          currency,
+          previous_status,
+          new_status,
+          payload_details
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      },
+      [
+        event_type,
+        license_id,
+        email,
+        product_sku,
+        source_system,
+        details[:platform_customer_id],
+        details[:platform_subscription_id],
+        details[:platform_invoice_id],
+        details[:amount_cents],
+        details[:currency],
+        details[:previous_status],
+        details[:new_status],
+        details[:payload_details] ? PG::Connection.escape_string(details[:payload_details].to_json) : nil
+      ]
+    )
+    puts "[AUDIT LOG] Evento '#{event_type}' para licença ID #{license_id} registrado."
+  end
+
 end

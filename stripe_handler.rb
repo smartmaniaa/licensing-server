@@ -61,7 +61,69 @@ module StripeHandler
       puts "[STRIPE] Cliente '#{email}' (ID: #{customer_id}) salvo/atualizado no banco local."
       return [200, {}, ['Cliente processado com sucesso']]
 
-    when 'credit_note.created'
+ # O trecho 'credit_note.created' deve ser reescrito
+when 'credit_note.created'
+  credit_note_data = event['data']['object']
+  
+  # Busca a fatura, assim como discutimos
+  invoice_id = credit_note_data['invoice']
+  
+  unless invoice_id
+    puts "[FINANCE] ALERTA: Nota de crédito #{credit_note_data['id']} sem ID de fatura associado. Reembolso não contabilizado."
+    return [200, {}, ['Nota de crédito sem fatura']]
+  end
+
+  begin
+    # Usa a fatura para encontrar a assinatura e os SKUs
+    invoice = Stripe::Invoice.retrieve(invoice_id, { expand: ['subscription', 'lines.data.price.product'] })
+    subscription_id = invoice.subscription
+    
+    unless subscription_id
+      puts "[FINANCE] ALERTA: Fatura #{invoice_id} sem ID de assinatura. Reembolso não contabilizado."
+      return [200, {}, ['Fatura sem assinatura']]
+    end
+    
+    product_skus = invoice.lines.data.flat_map { |item| stripe_price_to_sku_mapping[item.price.id] }.compact.uniq
+    
+    unless product_skus.any?
+      puts "[FINANCE] ALERTA: Nenhum SKU válido encontrado na fatura para o reembolso. Reembolso não contabilizado."
+      return [200, {}, ['Nenhum SKU válido encontrado']]
+    end
+    
+    amount_refunded = credit_note_data['amount']
+    currency = credit_note_data['currency']
+    
+    entitlement_info = $db.exec_params(
+      "SELECT l.id, l.email FROM license_entitlements le JOIN licenses l ON le.license_id = l.id WHERE le.platform_subscription_id = $1 LIMIT 1",
+      [subscription_id]
+    ).first
+    
+    License.log_platform_event(
+      event_type: 'refund',
+      license_id: entitlement_info['id'],
+      email: entitlement_info['email'],
+      product_sku: product_skus.first,
+      source_system: 'stripe_webhook',
+      details: {
+        platform_customer_id: credit_note_data['customer'],
+        platform_subscription_id: subscription_id,
+        platform_invoice_id: invoice_id,
+        amount_cents: -amount_refunded, # Valor negativo para reembolsos
+        currency: currency,
+        payload_details: event
+      }
+    )
+  
+    puts "[FINANCE] Reembolso de #{amount_paid} #{currency.upcase} para a assinatura #{subscription_id} registrado no log de auditoria."
+    return [200, {}, ['Reembolso agregado com sucesso']]
+    
+  rescue Stripe::InvalidRequestError => e
+    puts "⚠️ ERRO: Falha ao buscar fatura do Stripe: #{e.message}"
+    return [400, {}, ['Erro na busca do Stripe API']]
+  rescue => e
+    puts "‼️ ERRO inesperado ao processar reembolso: #{e.class} - #{e.message}\n#{e.backtrace.join("\n")}"
+    return [500, {}, ['Erro interno ao processar reembolso']]
+  end
       credit_note_data = event['data']['object']
       customer_id = credit_note_data['customer']
       amount_refunded = credit_note_data['amount']
@@ -230,49 +292,46 @@ module StripeHandler
     end
   end
 
-  def self.record_financial_transaction(invoice_data)
-    amount_paid = invoice_data['amount_paid']
-    currency = invoice_data['currency']
-    stripe_invoice_id = invoice_data['id']
-    paid_at_timestamp = invoice_data.dig('status_transitions', 'paid_at')
-    
-    return unless paid_at_timestamp
-    paid_at = Time.at(paid_at_timestamp)
+  # Depois, o novo método record_financial_transaction que usa a nova tabela de auditoria
+def self.record_financial_transaction(invoice_data)
+  amount_paid = invoice_data['amount_paid']
+  currency = invoice_data['currency']
+  stripe_invoice_id = invoice_data['id']
+  paid_at_timestamp = invoice_data.dig('status_transitions', 'paid_at')
 
-    subscription_id = invoice_data.dig('parent', 'subscription_details', 'subscription') || invoice_data.dig('lines', 'data', 0, 'subscription')
-    
-    return unless subscription_id
+  return unless paid_at_timestamp
+  paid_at = Time.at(paid_at_timestamp)
 
-    entitlement_info = $db.exec_params("SELECT l.id, l.family FROM license_entitlements le JOIN licenses l ON le.license_id = l.id WHERE le.platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
-    unless entitlement_info
-      puts "[FINANCE] ALERTA: Não foi possível encontrar a licença local para a assinatura #{subscription_id}. Registro financeiro ignorado."
-      return
-    end
-    license_id = entitlement_info['id']
-    product_family = entitlement_info['family']
+  subscription_id = invoice_data.dig('parent', 'subscription_details', 'subscription') || invoice_data.dig('lines', 'data', 0, 'subscription')
+  
+  return unless subscription_id
 
-    $db.exec_params(
-      %q{
-        INSERT INTO subscription_financials (stripe_subscription_id, license_id, gross_revenue_accumulated, currency)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (stripe_subscription_id) DO UPDATE SET
-        gross_revenue_accumulated = subscription_financials.gross_revenue_accumulated + $3,
-        updated_at = NOW()
-      },
-      [subscription_id, license_id, amount_paid, currency]
-    )
-
-    revenue_month = paid_at.strftime('%Y-%m-01')
-    $db.exec_params(
-      %q{
-        INSERT INTO monthly_family_revenue (product_family, revenue_month, gross_revenue_month, currency)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (product_family, revenue_month, currency) DO UPDATE SET
-        gross_revenue_month = monthly_family_revenue.gross_revenue_month + $3,
-        updated_at = NOW()
-      },
-      [product_family, revenue_month, amount_paid, currency]
-    )
-    puts "[FINANCE] Transação de #{amount_paid} #{currency.upcase} para a assinatura #{subscription_id} registrada com sucesso."
+  entitlement_info = $db.exec_params(
+    "SELECT l.id, l.email, le.product_sku FROM license_entitlements le JOIN licenses l ON le.license_id = l.id WHERE le.platform_subscription_id = $1 LIMIT 1",
+    [subscription_id]
+  ).first
+  
+  unless entitlement_info
+    puts "[FINANCE] ALERTA: Não foi possível encontrar a licença local para a assinatura #{subscription_id}. Registro financeiro ignorado."
+    return
   end
+  
+  License.log_platform_event(
+    event_type: 'payment',
+    license_id: entitlement_info['id'],
+    email: entitlement_info['email'],
+    product_sku: entitlement_info['product_sku'],
+    source_system: 'stripe_webhook',
+    details: {
+      platform_customer_id: invoice_data['customer'],
+      platform_subscription_id: subscription_id,
+      platform_invoice_id: stripe_invoice_id,
+      amount_cents: amount_paid,
+      currency: currency,
+      payload_details: invoice_data
+    }
+  )
+
+  puts "[FINANCE] Transação de #{amount_paid} #{currency.upcase} para a assinatura #{subscription_id} registrada no log de auditoria."
+end
 end
