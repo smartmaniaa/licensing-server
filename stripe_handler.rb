@@ -40,7 +40,7 @@ module StripeHandler
   
   private
 
-  def self.process_event(event)
+ def self.process_event(event)
     event_type = event['type']
     event_id = event['id']
     puts "[STRIPE] Webhook processando: Tipo '#{event_type}', ID '#{event_id}'"
@@ -81,6 +81,13 @@ module StripeHandler
           return [200, {}, ['Fatura sem assinatura']]
         end
 
+        product_skus = invoice.lines.data.flat_map { |item| stripe_price_to_sku_mapping[item.price.id] }.compact.uniq
+
+        unless product_skus.any?
+          puts "[FINANCE] ALERTA: Nenhum SKU válido encontrado na fatura para o reembolso. Reembolso não contabilizado."
+          return [200, {}, ['Nenhum SKU válido encontrado']]
+        end
+
         amount_refunded = credit_note_data['amount']
         currency = credit_note_data['currency']
         
@@ -98,7 +105,7 @@ module StripeHandler
           event_type: 'refund',
           license_id: entitlement_info['id'],
           email: entitlement_info['email'],
-          product_sku: nil,
+          product_sku: product_skus.join(','),
           source_system: 'stripe_webhook',
           details: {
             platform_customer_id: credit_note_data['customer'],
@@ -374,4 +381,5 @@ module StripeHandler
       return [200, {}, ['Evento não tratado']]
     end
   end
+ end
 end
