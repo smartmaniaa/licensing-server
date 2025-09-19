@@ -40,7 +40,7 @@ module StripeHandler
   
   private
 
- def self.process_event(event)
+  def self.process_event(event)
     event_type = event['type']
     event_id = event['id']
     puts "[STRIPE] Webhook processando: Tipo '#{event_type}', ID '#{event_id}'"
@@ -117,7 +117,6 @@ module StripeHandler
           }
         )
         
-        # Chama o método de registro financeiro com o valor NEGATIVO do reembolso
         self.record_financial_transaction({
           'amount_paid' => -amount_refunded,
           'currency' => currency,
@@ -381,5 +380,4 @@ module StripeHandler
       return [200, {}, ['Evento não tratado']]
     end
   end
- end
 end
