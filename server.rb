@@ -512,11 +512,12 @@ end
 end
   
   post '/admin/trials/clear' do
-    protected!
-    $db.exec("TRUNCATE trial_attempts RESTART IDENTITY;")
-    session[:notice] = "Os registros de tentativas de trial negadas foram apagados!"
-    redirect '/admin/trials'
-  end
+   protected!
+   # Substitua a linha antiga pela nova:
+   $db.exec_params("DELETE FROM platform_license_events_audit WHERE event_type = 'trial_denied'")
+   session[:notice] = "Os registros de tentativas de trial negadas foram apagados!"
+   redirect '/admin/trials'
+ end
 
   # --- ROTAS PARA AUDITORIA DE EVENTOS ---
   get '/admin/audit_log' do

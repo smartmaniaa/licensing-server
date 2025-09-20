@@ -376,4 +376,32 @@ module StripeHandler
       return [200, {}, ['Evento não tratado']]
     end
   end
+  # Dentro do módulo StripeHandler
+private
+def self.record_financial_transaction(invoice_data)
+  puts "[FINANCE] Registrando transação para a fatura: #{invoice_data['id']}"
+
+  subscription_id = invoice_data.dig('parent', 'subscription_details', 'subscription') || invoice_data.dig('lines', 'data', 0, 'subscription')
+  
+  return unless subscription_id
+  
+  license_id = $db.exec_params("SELECT license_id FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id]).first&.fetch('license_id')
+  
+  return unless license_id
+
+  amount_cents = invoice_data['amount_paid'] || invoice_data['amount_due']
+  currency = invoice_data['currency']
+  
+  gross_revenue_by_currency = {}
+  gross_revenue_by_currency[currency.downcase] = amount_cents
+
+  $db.exec_params(%q{
+    INSERT INTO license_financial_summary (license_id, gross_revenue_by_currency)
+    VALUES ($1, $2::jsonb)
+    ON CONFLICT (license_id) DO UPDATE SET
+      gross_revenue_by_currency = (
+        COALESCE(license_financial_summary.gross_revenue_by_currency, '{}'::jsonb) || $2::jsonb
+      )
+  }, [license_id, gross_revenue_by_currency.to_json])
+end
 end
