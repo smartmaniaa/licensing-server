@@ -1,4 +1,4 @@
-# ---- stripe_handler.rb (VERSÃO FINAL COM CORREÇÕES E REEMBOLSO SIMPLIFICADO) ----
+# ---- stripe_handler.rb (VERSÃO FINAL COM TODAS AS CORREÇÕES) ----
 require 'stripe'
 require 'json'
 require 'time'
@@ -68,13 +68,10 @@ module StripeHandler
       begin
         invoice_id = credit_note_data['invoice']
         
-        # Validação para evitar o NoMethodError
         return [400, {}, ['ID de fatura inválido no webhook']] unless invoice_id.is_a?(String) && !invoice_id.empty?
 
-        # Busca a fatura no Stripe para obter detalhes
         invoice = Stripe::Invoice.retrieve(invoice_id, { expand: ['subscription'] })
         
-        # Acessa a assinatura de forma segura
         subscription = invoice.subscription
         return [400, {}, ['Fatura sem assinatura']] unless subscription
         
@@ -86,13 +83,11 @@ module StripeHandler
         amount_refunded = credit_note_data['amount']
         currency = credit_note_data['currency']
         
-        # Tenta encontrar a licença pelo ID da assinatura
         entitlement_info = $db.exec_params(
           "SELECT l.id, l.email FROM license_entitlements le JOIN licenses l ON le.license_id = l.id WHERE le.platform_subscription_id = $1 LIMIT 1",
           [subscription_id]
         ).first
-    
-        # Se a busca por entitlement falhar, tenta encontrar pela licença principal (cliente)
+
         unless entitlement_info
           license_info = $db.exec_params(
             "SELECT id, email FROM licenses WHERE stripe_customer_id = $1 LIMIT 1",
@@ -102,12 +97,11 @@ module StripeHandler
           puts "[FINANCE] ALERTA: Não foi possível encontrar entitlement para a assinatura #{subscription_id}. Registro financeiro ligado ao ID do cliente Stripe."
         end
         
-        # Se ainda assim não encontrar, loga e retorna
         unless entitlement_info
           puts "[FINANCE] ALERTA: Não foi possível encontrar a licença local para o cliente #{credit_note_data['customer']}. Registro financeiro ignorado."
           return [200, {}, ['Licença local não encontrada']]
         end
-    
+
         License.log_platform_event(
           event_type: 'refund',
           license_id: entitlement_info['id'],

@@ -57,7 +57,7 @@
             </td>
             <td><%= event['source_system'] %></td>
             <td>
-              <pre><%= event['payload_details'] %></pre>
+              <pre><%= JSON.pretty_generate(JSON.parse(event['payload_details'])) rescue event['payload_details'] %></pre>
             </td>
           </tr>
         <% end %>
