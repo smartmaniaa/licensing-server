@@ -1,4 +1,4 @@
-# ---- stripe_handler.rb (VERSÃO FINAL COM REEMBOLSO SIMPLIFICADO) ----
+# ---- stripe_handler.rb (VERSÃO FINAL COM CORREÇÕES E REEMBOLSO SIMPLIFICADO) ----
 require 'stripe'
 require 'json'
 require 'time'
@@ -67,41 +67,47 @@ module StripeHandler
       
       begin
         invoice_id = credit_note_data['invoice']
-        return [400, {}, ['ID de fatura inválido no webhook']] unless invoice_id.is_a?(String)
         
-        unless invoice_id
-          puts "[FINANCE] ALERTA: Nota de crédito #{credit_note_data['id']} sem ID de fatura associado. Reembolso não contabilizado."
-          return [200, {}, ['Nota de crédito sem fatura']]
-        end
+        # Validação para evitar o NoMethodError
+        return [400, {}, ['ID de fatura inválido no webhook']] unless invoice_id.is_a?(String) && !invoice_id.empty?
 
+        # Busca a fatura no Stripe para obter detalhes
         invoice = Stripe::Invoice.retrieve(invoice_id, { expand: ['subscription'] })
-        subscription_id = invoice.subscription.id
         
-        unless subscription_id
-          puts "[FINANCE] ALERTA: Fatura #{invoice_id} sem ID de assinatura. Reembolso não contabilizado."
-          return [200, {}, ['Fatura sem assinatura']]
-        end
-
+        # Acessa a assinatura de forma segura
+        subscription = invoice.subscription
+        return [400, {}, ['Fatura sem assinatura']] unless subscription
+        
+        subscription_id = subscription.id
         product_skus = invoice.lines.data.flat_map { |item| stripe_price_to_sku_mapping[item.price.id] }.compact.uniq
 
-        unless product_skus.any?
-          puts "[FINANCE] ALERTA: Nenhum SKU válido encontrado na fatura para o reembolso. Reembolso não contabilizado."
-          return [200, {}, ['Nenhum SKU válido encontrado']]
-        end
-
+        return [400, {}, ['Nenhum SKU válido encontrado']] unless product_skus.any?
+        
         amount_refunded = credit_note_data['amount']
         currency = credit_note_data['currency']
         
+        # Tenta encontrar a licença pelo ID da assinatura
         entitlement_info = $db.exec_params(
           "SELECT l.id, l.email FROM license_entitlements le JOIN licenses l ON le.license_id = l.id WHERE le.platform_subscription_id = $1 LIMIT 1",
           [subscription_id]
         ).first
-        
+    
+        # Se a busca por entitlement falhar, tenta encontrar pela licença principal (cliente)
         unless entitlement_info
-          puts "[FINANCE] ALERTA: Não foi possível encontrar a licença local para a assinatura #{subscription_id}. Registro financeiro ignorado."
+          license_info = $db.exec_params(
+            "SELECT id, email FROM licenses WHERE stripe_customer_id = $1 LIMIT 1",
+            [credit_note_data['customer']]
+          ).first
+          entitlement_info = license_info
+          puts "[FINANCE] ALERTA: Não foi possível encontrar entitlement para a assinatura #{subscription_id}. Registro financeiro ligado ao ID do cliente Stripe."
+        end
+        
+        # Se ainda assim não encontrar, loga e retorna
+        unless entitlement_info
+          puts "[FINANCE] ALERTA: Não foi possível encontrar a licença local para o cliente #{credit_note_data['customer']}. Registro financeiro ignorado."
           return [200, {}, ['Licença local não encontrada']]
         end
-
+    
         License.log_platform_event(
           event_type: 'refund',
           license_id: entitlement_info['id'],
@@ -377,31 +383,31 @@ module StripeHandler
       return [200, {}, ['Evento não tratado']]
     end
   end
-  # Dentro do módulo StripeHandler
-private
-def self.record_financial_transaction(invoice_data)
-  puts "[FINANCE] Registrando transação para a fatura: #{invoice_data['id']}"
-  subscription_id = invoice_data.dig('parent', 'subscription_details', 'subscription') || invoice_data.dig('lines', 'data', 0, 'subscription')
-  
-  return unless subscription_id
-  
-  license_id = $db.exec_params("SELECT license_id FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id]).first&.fetch('license_id')
-  
-  return unless license_id
 
-  amount_cents = invoice_data['amount_paid'] || invoice_data['amount_due']
-  currency = invoice_data['currency']
+  private
+  def self.record_financial_transaction(invoice_data)
+    puts "[FINANCE] Registrando transação para a fatura: #{invoice_data['id']}"
+    subscription_id = invoice_data.dig('parent', 'subscription_details', 'subscription') || invoice_data.dig('lines', 'data', 0, 'subscription')
+    
+    return unless subscription_id
+    
+    license_id = $db.exec_params("SELECT license_id FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id]).first&.fetch('license_id')
+    
+    return unless license_id
   
-  gross_revenue_by_currency = {}
-  gross_revenue_by_currency[currency.downcase] = amount_cents
-
-  $db.exec_params(%q{
-    INSERT INTO license_financial_summary (license_id, gross_revenue_by_currency)
-    VALUES ($1, $2::jsonb)
-    ON CONFLICT (license_id) DO UPDATE SET
-      gross_revenue_by_currency = (
-        COALESCE(license_financial_summary.gross_revenue_by_currency, '{}'::jsonb) || $2::jsonb
-      )
-  }, [license_id, gross_revenue_by_currency.to_json])
-end
+    amount_cents = invoice_data['amount_paid'] || invoice_data['amount_due']
+    currency = invoice_data['currency']
+    
+    gross_revenue_by_currency = {}
+    gross_revenue_by_currency[currency.downcase] = amount_cents
+  
+    $db.exec_params(%q{
+      INSERT INTO license_financial_summary (license_id, gross_revenue_by_currency)
+      VALUES ($1, $2::jsonb)
+      ON CONFLICT (license_id) DO UPDATE SET
+        gross_revenue_by_currency = (
+          COALESCE(license_financial_summary.gross_revenue_by_currency, '{}'::jsonb) || $2::jsonb
+        )
+    }, [license_id, gross_revenue_by_currency.to_json])
+  end
 end
