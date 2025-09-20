@@ -9,9 +9,10 @@ module StripeHandler
 
   def self.stripe_price_to_sku_mapping
     mapping = {}
-    $db.exec("SELECT stripe_price_id, sku FROM products WHERE stripe_price_id IS NOT NULL").each do |row|
-      mapping[row['stripe_price_id']] ||= []
-      mapping[row['stripe_price_id']] << row['sku']
+    # CORREÇÃO: Busca na tabela 'platform_products' em vez de 'products'
+    $db.exec("SELECT product_sku, platform_id FROM platform_products WHERE platform = 'stripe' AND platform_id IS NOT NULL").each do |row|
+      mapping[row['platform_id']] ||= []
+      mapping[row['platform_id']] << row['product_sku']
     end
     mapping
   end
