@@ -67,6 +67,7 @@ module StripeHandler
       
       begin
         invoice_id = credit_note_data['invoice']
+        return [400, {}, ['ID de fatura inválido no webhook']] unless invoice_id.is_a?(String)
         
         unless invoice_id
           puts "[FINANCE] ALERTA: Nota de crédito #{credit_note_data['id']} sem ID de fatura associado. Reembolso não contabilizado."
@@ -380,7 +381,6 @@ module StripeHandler
 private
 def self.record_financial_transaction(invoice_data)
   puts "[FINANCE] Registrando transação para a fatura: #{invoice_data['id']}"
-
   subscription_id = invoice_data.dig('parent', 'subscription_details', 'subscription') || invoice_data.dig('lines', 'data', 0, 'subscription')
   
   return unless subscription_id

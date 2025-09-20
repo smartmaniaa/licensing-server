@@ -6,12 +6,6 @@ require 'json'
 require 'csv'
 require 'dotenv/load'
 require 'sendgrid-ruby'
-## Carrega o módulo de verificação de webhook da SendGrid de forma segura
-#begin
-#  require 'sendgrid-ruby/event_webhook'
-#rescue LoadError
-#  puts "[INFO] Módulo 'sendgrid-ruby/event_webhook' não encontrado, pulando."
-#end
 require_relative 'models/license.rb'
 require_relative 'models/product.rb'
 require_relative 'mailer.rb'
