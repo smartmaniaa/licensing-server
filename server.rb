@@ -253,6 +253,26 @@ post '/validate' do
   end
 
   # --- ROTAS DO PAINEL DE ADMIN ---
+
+  post '/admin/logs/clear' do
+  protected!
+  begin
+    $db.exec("TRUNCATE TABLE system_events RESTART IDENTITY")
+    SmartManiaaApp.log_event(
+      level: 'info',
+      source: 'admin',
+      message: 'Registros de logs de auditoria foram limpos.',
+      details: { user: ENV['ADMIN_USER'] }
+    )
+    puts "[ADMIN] Registros da tabela 'system_events' foram truncados."
+    session[:notice] = "Os registros de logs de auditoria foram limpos com sucesso!"
+  rescue PG::Error => e
+    puts "[ADMIN] ERRO ao tentar limpar os logs: #{e.message}"
+    session[:error] = "Erro ao tentar limpar os logs: #{e.message}"
+  end
+  redirect request.referer || '/admin/audit_log'
+end
+
 get '/admin' do
   protected!
   @licenses = License.all_with_summary

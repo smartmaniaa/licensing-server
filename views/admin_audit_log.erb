@@ -94,9 +94,13 @@
   <div class="header">
     <h1>Logs de Auditoria de Eventos</h1>
     <div class="header-buttons">
-      <a href="/admin" class="btn btn-secondary">← Voltar ao Painel Principal</a>
-      <button class="export-btn" onclick="exportCsv()">Exportar para CSV</button>
-    </div>
+  <a href="/admin" class="btn btn-secondary">← Voltar ao Painel Principal</a>
+  <button class="export-btn" onclick="exportCsv()">Exportar para CSV</button>
+
+  <form action="/admin/logs/clear" method="post" onsubmit="return confirm('Tem certeza que deseja apagar TODOS os logs de auditoria? Esta ação não pode ser desfeita!');" style="display:inline;">
+    <button type="submit" class="btn btn-secondary" style="background-color: #e74c3c;">Limpar Logs</button>
+  </form>
+</div>
   </div>
 
   <p>Detalhes de todos os eventos de licenças e pagamentos registrados no sistema.</p>
