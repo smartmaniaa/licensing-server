@@ -114,30 +114,30 @@
       </tr>
     </thead>
     <tbody>
-      <% if @audit_logs && @audit_logs.num_tuples.zero? %>
-        <tr>
-          <td colspan="7" style="text-align: center;">Nenhum evento de log encontrado.</td>
-        </tr>
-      <% else %>
-        <% @audit_logs.each do |log| %>
-          <tr>
-            <td><%= Time.parse(log['created_at']).strftime('%d/%m/%Y %H:%M') %></td>
-            <td><%= log['type'] %></td>
-            <td><%= log['license_id'] %></td>
-            <td><%= log['sku'] %></td>
-            <td><%= log['status'] %></td>
-            <td><%= log['origin'] %></td>
-            <td>
-              <% if log['details'] %>
-                <button class="btn-show-details" data-details="<%= log['details'] %>">Ver Detalhes</button>
-              <% else %>
-                ---
-              <% end %>
-            </td>
-          </tr>
-        <% end %>
-      <% end %>
-    </tbody>
+  <% if @audit_logs && @audit_logs.num_tuples.zero? %>
+    <tr>
+      <td colspan="7" style="text-align: center;">Nenhum evento de log encontrado.</td>
+    </tr>
+  <% else %>
+    <% @audit_logs.each do |log| %>
+      <tr>
+        <td><%= Time.parse(log['created_at']).strftime('%d/%m/%Y %H:%M') %></td>
+        <td><%= log['type'] %></td>
+        <td><%= log['license_id'] %></td>
+        <td><%= log['sku'] %></td>
+        <td><%= log['status'] %></td>
+        <td><%= log['origin'] %></td>
+        <td>
+          <% if log['details'] %>
+            <button class="btn-show-details" data-details="<%= log['details'] %>">Ver Detalhes</button>
+          <% else %>
+            ---
+          <% end %>
+        </td>
+      </tr>
+    <% end %>
+  <% end %>
+</tbody>
   </table>
 
   <div id="detailsModal" class="modal-overlay">
