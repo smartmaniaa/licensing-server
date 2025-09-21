@@ -514,11 +514,13 @@ end
  end
 
   # --- ROTAS PARA AUDITORIA DE EVENTOS ---
-  get '/admin/audit_log' do
-    protected!
-    @events = $db.exec("SELECT * FROM platform_license_events_audit ORDER BY recorded_at DESC LIMIT 1000")
-    erb :admin_audit_log
-  end
+ get '/admin/audit_log' do
+   protected!
+   # Substitua 'sua_funcao_de_busca_de_logs' pela sua lógica de busca no banco de dados
+   logs_result = $db.exec("SELECT * FROM sua_tabela_de_logs ORDER BY created_at DESC")
+   @audit_logs = logs_result || []  # Garante que seja um array vazio se o resultado for nulo
+   erb :admin_audit_log
+ end
 
   get '/admin/audit_log/export.csv' do
     protected!
