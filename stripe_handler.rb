@@ -102,7 +102,7 @@ module StripeHandler
           puts "[FINANCE] ALERTA: Não foi possível encontrar a licença local para o cliente #{credit_note_data['customer']}. Registro financeiro ignorado."
           return [200, {}, ['Licença local não encontrada']]
         end
-
+        
         License.log_platform_event(
           event_type: 'refund',
           license_id: entitlement_info['id'],
@@ -317,7 +317,7 @@ module StripeHandler
         license_info = $db.exec_params("SELECT id, email FROM licenses WHERE stripe_customer_id = $1 LIMIT 1", [invoice_data['customer']]).first
         if entitlement_info && license_info
           License.log_platform_event(
-            event_type: 'status_change',
+            event_type: 'payment_failed',
             license_id: license_info['id'],
             email: license_info['email'],
             product_sku: nil,
