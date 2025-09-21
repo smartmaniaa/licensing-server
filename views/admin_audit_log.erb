@@ -17,7 +17,7 @@
     table { width: 100%; border-collapse: collapse; margin-top: 1em;
       background-color: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
     th, td { padding: 12px 15px; text-align: left;
-      border-bottom: 1px solid #ddd; }
+      border-bottom: 1px solid #ddd; word-break: break-word; }
     th { background-color: #3498db;
       color: white; }
     tr:hover { background-color: #e8f4fd; }
@@ -77,8 +77,8 @@
       cursor: pointer;
       font-size: 12px;
     }
-    /* Estilos para o botão de exportar */
-    .export-btn {
+    /* Estilos para os botões de ação do cabeçalho */
+    .export-btn, .clear-logs-btn {
       background-color: #27ae60;
       color: white;
       padding: 8px 15px;
@@ -88,19 +88,21 @@
       border: none;
       cursor: pointer;
     }
+    .clear-logs-btn {
+      background-color: #e74c3c;
+    }
   </style>
 </head>
 <body>
   <div class="header">
     <h1>Logs de Auditoria de Eventos</h1>
     <div class="header-buttons">
-  <a href="/admin" class="btn btn-secondary">← Voltar ao Painel Principal</a>
-  <button class="export-btn" onclick="exportCsv()">Exportar para CSV</button>
-
-  <form action="/admin/logs/clear" method="post" onsubmit="return confirm('Tem certeza que deseja apagar TODOS os logs de auditoria? Esta ação não pode ser desfeita!');" style="display:inline;">
-    <button type="submit" class="btn btn-secondary" style="background-color: #e74c3c;">Limpar Logs</button>
-  </form>
-</div>
+      <a href="/admin" class="btn btn-secondary">← Voltar ao Painel Principal</a>
+      <button class="export-btn" onclick="window.location.href='/admin/logs/export.csv'">Exportar para CSV</button>
+      <form action="/admin/logs/clear" method="post" onsubmit="return confirm('Tem certeza que deseja apagar TODOS os logs de auditoria? Esta ação não pode ser desfeita!');" style="display:inline;">
+        <button type="submit" class="btn clear-logs-btn">Limpar Logs</button>
+      </form>
+    </div>
   </div>
 
   <p>Detalhes de todos os eventos de licenças e pagamentos registrados no sistema.</p>
@@ -109,39 +111,35 @@
     <thead>
       <tr>
         <th>Data/Hora</th>
-        <th>Tipo</th>
-        <th>ID da Licença</th>
-        <th>SKU</th>
-        <th>Status</th>
-        <th>Origem</th>
+        <th>Nível</th>
+        <th>Fonte</th>
+        <th>Mensagem</th>
         <th>Detalhes</th>
       </tr>
     </thead>
     <tbody>
-  <% if @audit_logs && @audit_logs.num_tuples.zero? %>
-    <tr>
-      <td colspan="7" style="text-align: center;">Nenhum evento de log encontrado.</td>
-    </tr>
-  <% else %>
-    <% @audit_logs.each do |log| %>
-      <tr>
-        <td><%= Time.parse(log['created_at']).strftime('%d/%m/%Y %H:%M') %></td>
-        <td><%= log['type'] %></td>
-        <td><%= log['license_id'] %></td>
-        <td><%= log['sku'] %></td>
-        <td><%= log['status'] %></td>
-        <td><%= log['origin'] %></td>
-        <td>
-          <% if log['details'] %>
-            <button class="btn-show-details" data-details="<%= log['details'].to_json %>">Ver Detalhes</button>
-          <% else %>
-            ---
-          <% end %>
-        </td>
-      </tr>
-    <% end %>
-  <% end %>
-</tbody>
+      <% if @audit_logs.nil? || @audit_logs.num_tuples.zero? %>
+        <tr>
+          <td colspan="5" style="text-align: center;">Nenhum evento de log encontrado.</td>
+        </tr>
+      <% else %>
+        <% @audit_logs.each do |log| %>
+          <tr>
+            <td><%= Time.parse(log['created_at']).strftime('%d/%m/%Y %H:%M') %></td>
+            <td><%= log['level'] %></td>
+            <td><%= log['source'] %></td>
+            <td><%= log['message'] %></td>
+            <td>
+              <% if log['details'] %>
+                <button class="btn-show-details" data-details="<%= log['details'] %>">Ver Detalhes</button>
+              <% else %>
+                ---
+              <% end %>
+            </td>
+          </tr>
+        <% end %>
+      <% end %>
+    </tbody>
   </table>
 
   <div id="detailsModal" class="modal-overlay">
@@ -181,13 +179,6 @@
           modal.style.display = 'none';
         }
       });
-      
-      // Lógica de exportação para CSV
-      function exportCsv() {
-        // Implementar a lógica de exportação aqui
-        // Isso pode ser uma chamada para uma nova rota como '/admin/logs/export.csv'
-        alert('Funcionalidade de exportação de CSV a ser implementada.');
-      }
     });
   </script>
 </body>

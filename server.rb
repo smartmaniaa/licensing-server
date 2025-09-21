@@ -91,12 +91,15 @@ class SmartManiaaApp < Sinatra::Base
 
   # Tornando o método de log acessível para outros módulos
   def self.log_event(level:, source:, message:, details: nil)
-    details_json = details ? PG::Connection.escape_string(details.to_json) : nil
-    $db.exec_params(
-      "INSERT INTO system_events (level, source, message, details) VALUES ($1, $2, $3, $4)",
-      [level.to_s.upcase, source, message, details_json]
-    )
-  end
+   # A correção é feita aqui: convertendo o hash para JSON antes de escapar
+   details_json = details ? details.to_json : nil
+  
+   # A linha abaixo já está usando a interpolação segura do PostgreSQL
+   $db.exec_params(
+     "INSERT INTO system_events (level, source, message, details) VALUES ($1, $2, $3, $4)",
+     [level.to_s.upcase, source, message, details_json]
+   )
+ end
 
   # --- ROTAS PÚBLICAS ---
   get '/' do
