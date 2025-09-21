@@ -255,7 +255,61 @@ module StripeHandler
       end
       return [200, {}, ['Atualização de assinatura processada']]
 
-    when 'invoice.paid', 'invoice.payment_succeeded'
+# ...
+when 'invoice.paid', 'invoice.payment_succeeded'
+  invoice_data = event['data']['object']
+  
+  record_financial_transaction(invoice_data)
+
+  billing_reason = invoice_data['billing_reason']&.strip
+  
+  if billing_reason == 'subscription_cycle'
+    subscription_id = invoice_data.dig('parent', 'subscription_details', 'subscription') || invoice_data.dig('lines', 'data', 0, 'subscription')
+    period_end_timestamp = invoice_data.dig('lines', 'data', 0, 'period', 'end')
+    
+    if subscription_id && period_end_timestamp
+      puts "[STRIPE] Processando RENOVAÇÃO para a assinatura: #{subscription_id}."
+      new_expires_at = Time.at(period_end_timestamp)
+      
+      entitlement_info = $db.exec_params("SELECT id, status FROM license_entitlements WHERE platform_subscription_id = $1 LIMIT 1", [subscription_id]).first
+      license_info = $db.exec_params("SELECT id, email FROM licenses WHERE stripe_customer_id = $1 LIMIT 1", [invoice_data['customer']]).first
+      if entitlement_info && license_info
+        # --- INÍCIO DA CORREÇÃO ---
+        License.log_platform_event(
+          event_type: 'renewal',
+          license_id: license_info['id'],
+          email: license_info['email'],
+          product_sku: nil,
+          source_system: 'stripe_webhook',
+          details: {
+            platform_customer_id: invoice_data['customer'],
+            platform_subscription_id: subscription_id,
+            previous_status: entitlement_info['status'],
+            new_status: 'active',
+            payload_details: event
+          }
+        )
+        # --- FIM DA CORREÇÃO ---
+      end
+      
+      result = License.update_entitlement_from_stripe(
+        subscription_id: subscription_id, 
+        new_status: 'active', 
+        new_expires_at: new_expires_at
+      )
+      if result.cmd_tuples > 0
+        puts "[STRIPE] Sucesso: RENOVAÇÃO CONFIRMADA. Assinatura válida até #{new_expires_at}."
+      else
+        puts "[STRIPE] ALERTA: Renovação processada, mas nenhuma licença foi atualizada."
+      end
+    else
+        puts "[STRIPE] ERRO: 'subscription_id' ou 'period_end' não encontrados no evento de renovação."
+    end
+  end
+  
+  return [200, {}, ['Evento de pagamento processado']]
+# ... (resto do código) ...
+end
       invoice_data = event['data']['object']
       
       record_financial_transaction(invoice_data)

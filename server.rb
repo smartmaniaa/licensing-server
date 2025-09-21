@@ -291,7 +291,7 @@ end
 
 get '/admin/logs/export.csv' do
   protected!
-  logs = $db.exec("SELECT * FROM system_events ORDER BY created_at DESC")
+  events = $db.exec("SELECT * FROM system_events ORDER BY created_at DESC")
   content_type 'text/csv'
   attachment "logs-smartmaniaa-#{Time.now.strftime('%Y%m%d')}.csv"
   CSV.generate(col_sep: ';') do |csv|
@@ -603,13 +603,20 @@ end
   # --- ROTAS PARA AUDITORIA DE EVENTOS ---
  get '/admin/audit_log' do
    protected!
-   # Filtra os logs para exibir apenas eventos de negócio relevantes
+   # A query agora busca da tabela correta
    @audit_logs = $db.exec(%q{
-     SELECT * FROM system_events
-     WHERE
-       source != 'sendgrid_webhook' AND
-       source != 'admin'
-     ORDER BY created_at DESC
+     SELECT 
+        recorded_at AS created_at,
+        source_system AS source,
+        event_type AS message,
+        'info' AS level,
+        payload_details AS details,
+        license_id,
+        platform_subscription_id,
+        email,
+        product_sku
+     FROM platform_license_events_audit
+     ORDER BY recorded_at DESC
    })
  
    erb :admin_audit_log
