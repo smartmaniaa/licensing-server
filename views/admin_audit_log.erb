@@ -2,67 +2,189 @@
 <html lang="pt-br">
 <head>
   <meta charset="UTF-8">
-  <title>Logs de Auditoria - SmartManiaa</title>
+  <title>Logs de Auditoria de Eventos - SmartManiaa</title>
   <style>
-    body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; margin:2em; background:#f4f6f8; color:#333; }
-    .container { max-width: 1300px; margin: 0 auto; background-color: #fff; padding: 2em; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
-    h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
-    .header-btns { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5em; }
-    .back-link { color: #3498db; text-decoration: none; }
-    .btn { background-color: #28a745; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; font-size: 14px; }
+    /* Estilos baseados em admin_dashboard.erb para consistência */
+    body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+      margin:2em; background:#f4f6f8; color:#333; }
+    h1 { color: #2c3e50; }
+    .header { display: flex; justify-content: space-between;
+      align-items: center; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-bottom: 1em; }
+    .header-buttons { display: flex; gap: 1em; }
+    .btn { background: #3498db; color: #fff; padding: 10px 18px; border: none; border-radius: 5px; text-decoration: none;
+      font-weight: 500; font-size: 15px; }
     .btn-secondary { background-color: #7f8c8d; }
-    table { width: 100%; border-collapse: collapse; margin-top: 1em; }
-    th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; word-break: break-all; font-size: 0.9em; }
-    th { background-color: #34495e; color: white; }
-    .log-info { font-size: 0.9em; color: #7f8c8d; }
-    pre { white-space: pre-wrap; word-wrap: break-word; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1em;
+      background-color: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    th, td { padding: 12px 15px; text-align: left;
+      border-bottom: 1px solid #ddd; }
+    th { background-color: #3498db;
+      color: white; }
+    tr:hover { background-color: #e8f4fd; }
+    a { color: #3498db;
+      text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* Estilos para o Modal (Popup) */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.5);
+      justify-content: center;
+      align-items: center;
+    }
+    .modal-content {
+      background-color: #fefefe;
+      padding: 25px;
+      border-radius: 8px;
+      width: 90%;
+      max-width: 800px;
+      position: relative;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    .modal-close {
+      color: #aaa;
+      position: absolute;
+      top: 10px;
+      right: 20px;
+      font-size: 28px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    #json-viewer {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: monospace;
+      font-size: 14px;
+      line-height: 1.5;
+      background: #f4f6f8;
+      padding: 15px;
+      border-radius: 5px;
+      max-height: 60vh;
+      overflow-y: auto;
+    }
+    .btn-show-details {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 5px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    /* Estilos para o botão de exportar */
+    .export-btn {
+      background-color: #27ae60;
+      color: white;
+      padding: 8px 15px;
+      border-radius: 5px;
+      text-decoration: none;
+      font-size: 14px;
+      border: none;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header-btns">
-      <a href="/admin" class="back-link">&larr; Voltar ao Painel Principal</a>
-      <a href="/admin/audit_log/export.csv" class="btn btn-secondary">Exportar Tudo para CSV</a>
-    </div>
+  <div class="header">
     <h1>Logs de Auditoria de Eventos</h1>
-    <p>Detalhes de todos os eventos de licenças e pagamentos registrados no sistema.</p>
+    <div class="header-buttons">
+      <a href="/admin" class="btn btn-secondary">← Voltar ao Painel Principal</a>
+      <button class="export-btn" onclick="exportCsv()">Exportar para CSV</button>
+    </div>
+  </div>
 
-    <table>
-      <thead>
+  <p>Detalhes de todos os eventos de licenças e pagamentos registrados no sistema.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Data/Hora</th>
+        <th>Tipo</th>
+        <th>ID da Licença</th>
+        <th>SKU</th>
+        <th>Status</th>
+        <th>Origem</th>
+        <th>Detalhes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% if @audit_logs && @audit_logs.num_tuples.zero? %>
         <tr>
-          <th>Data/Hora</th>
-          <th>Tipo</th>
-          <th>ID da Licença</th>
-          <th>SKU</th>
-          <th>Status</th>
-          <th>Valor</th>
-          <th>Origem</th>
-          <th>Detalhes</th>
+          <td colspan="7" style="text-align: center;">Nenhum evento de log encontrado.</td>
         </tr>
-      </thead>
-      <tbody>
-        <% @events.each do |event| %>
+      <% else %>
+        <% @audit_logs.each do |log| %>
           <tr>
-            <td class="log-info"><%= Time.parse(event['recorded_at']).strftime('%d/%m/%Y %H:%M:%S') %></td>
-            <td><%= event['event_type'] %></td>
-            <td><%= event['license_id'] %></td>
-            <td><%= event['product_sku'] %></td>
-            <td><%= event['new_status'] %></td>
+            <td><%= Time.parse(log['created_at']).strftime('%d/%m/%Y %H:%M') %></td>
+            <td><%= log['type'] %></td>
+            <td><%= log['license_id'] %></td>
+            <td><%= log['sku'] %></td>
+            <td><%= log['status'] %></td>
+            <td><%= log['origin'] %></td>
             <td>
-              <% if event['amount_cents'] %>
-                <%= sprintf('%s %.2f', event['currency'].upcase == 'USD' ? 'US$' : 'R$', event['amount_cents'] / 100.0) %>
+              <% if log['details'] %>
+                <button class="btn-show-details" data-details="<%= log['details'] %>">Ver Detalhes</button>
               <% else %>
                 ---
               <% end %>
             </td>
-            <td><%= event['source_system'] %></td>
-            <td>
-              <pre><%= JSON.pretty_generate(JSON.parse(event['payload_details'])) rescue event['payload_details'] %></pre>
-            </td>
           </tr>
         <% end %>
-      </tbody>
-    </table>
+      <% end %>
+    </tbody>
+  </table>
+
+  <div id="detailsModal" class="modal-overlay">
+    <div class="modal-content">
+      <span class="modal-close">&times;</span>
+      <h2>Detalhes do Evento</h2>
+      <pre><code id="json-viewer"></code></pre>
+    </div>
   </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const modal = document.getElementById('detailsModal');
+      const closeBtn = document.querySelector('.modal-close');
+      const jsonViewer = document.getElementById('json-viewer');
+
+      document.querySelectorAll('.btn-show-details').forEach(button => {
+        button.addEventListener('click', () => {
+          const rawData = button.getAttribute('data-details');
+          try {
+            const parsedData = JSON.parse(rawData);
+            const formattedData = JSON.stringify(parsedData, null, 2);
+            jsonViewer.textContent = formattedData;
+          } catch (e) {
+            jsonViewer.textContent = 'Erro ao formatar o JSON. Dados brutos: ' + rawData;
+          }
+          modal.style.display = 'flex';
+        });
+      });
+
+      closeBtn.addEventListener('click', () => {
+        modal.style.display = 'none';
+      });
+
+      window.addEventListener('click', (event) => {
+        if (event.target === modal) {
+          modal.style.display = 'none';
+        }
+      });
+      
+      // Lógica de exportação para CSV
+      function exportCsv() {
+        // Implementar a lógica de exportação aqui
+        // Isso pode ser uma chamada para uma nova rota como '/admin/logs/export.csv'
+        alert('Funcionalidade de exportação de CSV a ser implementada.');
+      }
+    });
+  </script>
 </body>
 </html>
