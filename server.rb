@@ -559,8 +559,15 @@ end
   # --- ROTAS PARA AUDITORIA DE EVENTOS ---
  get '/admin/audit_log' do
    protected!
-   # A tabela correta para os logs é 'system_events'
-   @audit_logs = $db.exec("SELECT * FROM system_events ORDER BY created_at DESC")
+   # Filtra os logs para exibir apenas eventos de negócio relevantes
+   @audit_logs = $db.exec(%q{
+     SELECT * FROM system_events
+     WHERE
+       source != 'sendgrid_webhook' AND
+       source != 'admin'
+     ORDER BY created_at DESC
+   })
+ 
    erb :admin_audit_log
  end
 
