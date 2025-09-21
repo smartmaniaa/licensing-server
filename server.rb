@@ -158,6 +158,19 @@ class SmartManiaaApp < Sinatra::Base
       grant_source: "trial_#{family}", phone: phone
     )
     puts "[TRIAL] Sucesso: Trial iniciado para '#{email}' no MAC '#{mac_address}'."
+    
+    # --- INÍCIO DA CORREÇÃO ---
+    license = $db.exec_params("SELECT id, family FROM licenses WHERE license_key = $1", [key]).first
+    License.log_platform_event(
+      event_type: 'trial_started',
+      license_id: license['id'],
+      email: email,
+      product_sku: family_skus.join(','),
+      source_system: 'start_trial_route',
+      details: { payload_details: params }
+    )
+    # --- FIM DA CORREÇÃO ---
+
     { license_key: key, status: "trial_started", expires_at: expires_at }.to_json
   end
 
@@ -461,7 +474,7 @@ end
     
     family = License.find_family_by_sku(product_skus.first)
     
-    License.provision_license(
+    license_id, key, was_new = License.provision_license(
       email: email, 
       family: family, 
       product_skus: product_skus, 
@@ -471,6 +484,18 @@ end
       grant_source: "manual_admin_#{origin}",
       phone: phone
     )
+
+    # --- INÍCIO DA CORREÇÃO ---
+    event_type = was_new ? 'provision' : 'admin_grant'
+    License.log_platform_event(
+      event_type: event_type,
+      license_id: license_id,
+      email: email,
+      product_sku: product_skus.join(','),
+      source_system: 'admin_panel',
+      details: { payload_details: params }
+    )
+    # --- FIM DA CORREÇÃO ---
 
     puts "[ADMIN] Licença manual criada para '#{email}' com os SKUs: #{product_skus.join(', ')}."
     redirect '/admin'
@@ -500,9 +525,28 @@ end
 
   post '/admin/license/:id/revoke' do
     protected!
-    License.revoke(params['id'])
-    puts "[ADMIN] Todos os direitos de uso ativos da Licença ID #{params['id']} foram revogados."
-    redirect "/admin/license/#{params['id']}"
+    license_id = params['id']
+    License.revoke(license_id)
+    
+    # --- INÍCIO DA CORREÇÃO ---
+    license_info = $db.exec_params("SELECT email FROM licenses WHERE id = $1", [license_id]).first
+    if license_info
+      License.log_platform_event(
+        event_type: 'revocation',
+        license_id: license_id,
+        email: license_info['email'],
+        product_sku: nil,
+        source_system: 'admin_panel',
+        details: {
+          revoked_by: ENV['ADMIN_USER'],
+          payload_details: params
+        }
+      )
+    end
+    # --- FIM DA CORREÇÃO ---
+
+    puts "[ADMIN] Todos os direitos de uso ativos da Licença ID #{license_id} foram revogados."
+    redirect "/admin/license/#{license_id}"
   end
 
   post '/admin/license/:id/unlink_mac' do
