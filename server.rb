@@ -516,9 +516,8 @@ end
   # --- ROTAS PARA AUDITORIA DE EVENTOS ---
  get '/admin/audit_log' do
    protected!
-   # Substitua 'sua_funcao_de_busca_de_logs' pela sua lógica de busca no banco de dados
-   logs_result = $db.exec("SELECT * FROM sua_tabela_de_logs ORDER BY created_at DESC")
-   @audit_logs = logs_result || []  # Garante que seja um array vazio se o resultado for nulo
+   # A tabela correta para os logs é 'system_events'
+   @audit_logs = $db.exec("SELECT * FROM system_events ORDER BY created_at DESC")
    erb :admin_audit_log
  end
 
