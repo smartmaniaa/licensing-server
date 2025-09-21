@@ -133,7 +133,7 @@
         <td><%= log['origin'] %></td>
         <td>
           <% if log['details'] %>
-            <button class="btn-show-details" data-details="<%= log['details'] %>">Ver Detalhes</button>
+            <button class="btn-show-details" data-details="<%= log['details'].to_json %>">Ver Detalhes</button>
           <% else %>
             ---
           <% end %>

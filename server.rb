@@ -273,6 +273,26 @@ post '/validate' do
   redirect request.referer || '/admin/audit_log'
 end
 
+get '/admin/logs/export.csv' do
+  protected!
+  logs = $db.exec("SELECT * FROM system_events ORDER BY created_at DESC")
+  content_type 'text/csv'
+  attachment "logs-smartmaniaa-#{Time.now.strftime('%Y%m%d')}.csv"
+  CSV.generate(col_sep: ';') do |csv|
+    csv << ["Data/Hora", "Nível", "Fonte", "Mensagem", "Detalhes"]
+    logs.each do |log|
+      details_str = log['details'] ? JSON.pretty_generate(JSON.parse(log['details'])) : ''
+      csv << [
+        Time.parse(log['created_at']).strftime('%d/%m/%Y %H:%M'),
+        log['level'],
+        log['source'],
+        log['message'],
+        details_str
+      ]
+    end
+  end
+end
+
 get '/admin' do
   protected!
   @licenses = License.all_with_summary
