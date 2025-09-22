@@ -273,14 +273,15 @@ post '/validate' do
   post '/admin/logs/clear' do
   protected!
   begin
-    $db.exec("TRUNCATE TABLE system_events RESTART IDENTITY")
+    # CORREÇÃO APLICADA AQUI: O TRUNCATE agora age sobre a tabela correta.
+    $db.exec("TRUNCATE TABLE platform_license_events_audit RESTART IDENTITY")
     SmartManiaaApp.log_event(
       level: 'info',
       source: 'admin',
       message: 'Registros de logs de auditoria foram limpos.',
       details: { user: ENV['ADMIN_USER'] }
     )
-    puts "[ADMIN] Registros da tabela 'system_events' foram truncados."
+    puts "[ADMIN] Registros da tabela 'platform_license_events_audit' foram truncados."
     session[:notice] = "Os registros de logs de auditoria foram limpos com sucesso!"
   rescue PG::Error => e
     puts "[ADMIN] ERRO ao tentar limpar os logs: #{e.message}"
@@ -291,20 +292,33 @@ end
 
 get '/admin/logs/export.csv' do
   protected!
-  events = $db.exec("SELECT * FROM system_events ORDER BY created_at DESC")
+  # CORREÇÃO APLICADA AQUI: A query de exportação agora filtra e busca da tabela correta
+  logs = $db.exec(%q{
+     SELECT 
+        recorded_at AS "Data/Hora",
+        event_type AS "Tipo",
+        source_system AS "Origem",
+        license_id AS "ID da Licença",
+        product_sku AS "SKU",
+        email AS "Email",
+        platform_subscription_id AS "ID da Assinatura",
+        payload_details AS "Detalhes"
+     FROM platform_license_events_audit
+     WHERE
+       event_type != 'trial_denied'
+     ORDER BY recorded_at DESC
+   })
+
   content_type 'text/csv'
   attachment "logs-smartmaniaa-#{Time.now.strftime('%Y%m%d')}.csv"
+  
   CSV.generate(col_sep: ';') do |csv|
-    csv << ["Data/Hora", "Nível", "Fonte", "Mensagem", "Detalhes"]
+    csv << logs.fields.map { |f| f.gsub('_', ' ').capitalize }
     logs.each do |log|
-      details_str = log['details'] ? JSON.pretty_generate(JSON.parse(log['details'])) : ''
-      csv << [
-        Time.parse(log['created_at']).strftime('%d/%m/%Y %H:%M'),
-        log['level'],
-        log['source'],
-        log['message'],
-        details_str
-      ]
+      csv << log.values.map do |value|
+        # Remove a quebra de linha e as aspas extras do JSON antes de salvar no CSV
+        value.is_a?(String) ? value.gsub(/\n/, '').gsub(/"/, '') : value
+      end
     end
   end
 end
@@ -616,6 +630,9 @@ end
         email,
         product_sku
      FROM platform_license_events_audit
+     WHERE
+        source_system != 'sendgrid_webhook' AND
+        event_type NOT IN ('trial_denied')
      ORDER BY recorded_at DESC
    })
  
@@ -624,13 +641,57 @@ end
 
   get '/admin/audit_log/export.csv' do
     protected!
-    events = $db.exec("SELECT * FROM platform_license_events_audit ORDER BY recorded_at DESC")
+    # CORREÇÃO APLICADA AQUI: A query de exportação agora filtra e busca da tabela correta
+    events = $db.exec(%q{
+       SELECT 
+          recorded_at,
+          event_type,
+          source_system,
+          license_id,
+          product_sku,
+          email,
+          platform_subscription_id,
+          payload_details
+       FROM platform_license_events_audit
+       WHERE
+         source_system != 'sendgrid_webhook' AND
+         event_type NOT IN ('trial_denied')
+       ORDER BY recorded_at DESC
+     })
+
     content_type 'text/csv'
-    headers 'Content-Disposition' => "attachment; filename=\"log_auditoria_smartmaniaa_#{Time.now.strftime('%Y%m%d')}.csv\""
+    attachment "logs-smartmaniaa-#{Time.now.strftime('%Y%m%d')}.csv"
+    
+    CSV.generate(col_sep: ';') do |csv|
+      # Mapeia os nomes das colunas para os cabeçalhos que você deseja
+      csv << ["Data/Hora", "Tipo", "Origem", "ID da Licença", "SKU", "Email", "ID da Assinatura", "Detalhes"]
+      events.each do |log|
+        csv << [
+          Time.parse(log['recorded_at']).strftime('%d/%m/%Y %H:%M'),
+          log['event_type'],
+          log['source_system'],
+          log['license_id'],
+          log['product_sku'],
+          log['email'],
+          log['platform_subscription_id'],
+          log['payload_details'] # O JSON completo irá para uma única célula
+        ]
+      end
+    end
+  end
+
+  get '/admin/licenses/export.csv' do
+    protected!
+    licenses = License.all_with_summary
+    content_type 'text/csv'
+    headers 'Content-Disposition' => "attachment; filename=\"licencas-smartmaniaa-#{Time.now.strftime('%Y%m%d')}.csv\""
     CSV.generate do |csv|
-      csv << events.fields # Cabeçalhos
-      events.each do |event|
-        csv << event.values # Valores das linhas
+      csv << ["Email", "Chave de Licença", "Status Resumido", "Origens Ativas", "Data de Criação"]
+      licenses.each do |license|
+        csv << [
+          license['email'], license['license_key'], license['summary_status'],
+          license['summary_origins'], Time.parse(license['created_at']).strftime('%d/%m/%Y %H:%M')
+        ]
       end
     end
   end
