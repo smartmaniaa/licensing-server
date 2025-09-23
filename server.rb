@@ -174,6 +174,34 @@ class SmartManiaaApp < Sinatra::Base
     { license_key: key, status: "trial_started", expires_at: expires_at }.to_json
   end
 
+ post '/unlink_machine' do
+     content_type :json
+     begin
+       params = JSON.parse(request.body.read)
+     rescue JSON::ParserError
+       halt 400, { error: 'Invalid JSON' }.to_json
+     end 
+ 
+     key = params['license_key']
+     
+     # Busca a licença pela chave fornecida
+     license_result = $db.exec_params("SELECT id FROM licenses WHERE license_key = $1 LIMIT 1", [key])
+     
+     if license_result.num_tuples.zero?
+       status 404
+       return { status: 'failed', message: 'Chave de licença não encontrada.' }.to_json
+     end
+    
+     license_id = license_result.first['id']
+    
+     # Chama o método que já existe no seu model para limpar o MAC Address
+     License.unlink_mac(license_id)
+    
+     puts "[API] Máquina desvinculada com sucesso para a chave que começa com: #{key[0..8]}..."
+    
+     return { status: 'success', message: 'Máquina desvinculada com sucesso.' }.to_json
+ end
+
 
  get '/product_info/:sku' do
   content_type :json
