@@ -207,12 +207,22 @@ post '/validate' do
     )
 
     if entitlement_result.num_tuples.zero?
-      return { 
-  status: 'invalid', 
-  message: "Nenhum direito de uso ativo encontrado para este produto.", 
-  code: 'entitlement_invalid' 
-}.to_json
-    end
+  # Busca o link de compra para o SKU que falhou a validação
+  purchase_link_result = $db.exec_params(
+    "SELECT purchase_link FROM platform_products WHERE product_sku = $1 LIMIT 1", 
+    [sku]
+  ).first
+
+  purchase_url = purchase_link_result ? purchase_link_result['purchase_link'] : nil
+
+  # Retorna a resposta de erro, AGORA INCLUINDO o purchase_url
+  return { 
+    status: 'invalid', 
+    message: "Nenhum direito de uso ativo encontrado para este produto.", 
+    code: 'entitlement_invalid',
+    purchase_url: purchase_url # <-- ADIÇÃO IMPORTANTE
+  }.to_json
+end
 
     if license['mac_address'].nil?
       $db.exec_params("UPDATE licenses SET mac_address = $1 WHERE id = $2", [mac, license['id']])
