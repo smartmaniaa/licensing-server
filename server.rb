@@ -174,7 +174,29 @@ class SmartManiaaApp < Sinatra::Base
     { license_key: key, status: "trial_started", expires_at: expires_at }.to_json
   end
 
-post '/validate' do
+
+ get '/product_info/:sku' do
+   content_type :json
+   sku = params['sku']
+   
+   product_info = $db.exec_params(
+     "SELECT p.name, pp.purchase_link 
+      FROM products p
+      LEFT JOIN platform_products pp ON p.sku = pp.product_sku AND pp.platform = 'stripe'
+      WHERE p.sku = $1 LIMIT 1",
+     [sku]
+   ).first
+   
+   if product_info
+     product_info.to_json
+   else
+     halt 404, { error: "Produto não encontrado" }.to_json
+   end
+ end
+
+
+
+ post '/validate' do
     content_type :json
     begin
       params = JSON.parse(request.body.read)
@@ -223,6 +245,7 @@ post '/validate' do
     purchase_url: purchase_url # <-- ADIÇÃO IMPORTANTE
   }.to_json
 end
+
 
     if license['mac_address'].nil?
       $db.exec_params("UPDATE licenses SET mac_address = $1 WHERE id = $2", [mac, license['id']])
