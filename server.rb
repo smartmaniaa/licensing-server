@@ -174,32 +174,47 @@ class SmartManiaaApp < Sinatra::Base
     { license_key: key, status: "trial_started", expires_at: expires_at }.to_json
   end
 
+ # Em server.rb, substitua a rota /unlink_machine por esta:
+
  post '/unlink_machine' do
-     content_type :json
-     begin
-       params = JSON.parse(request.body.read)
-     rescue JSON::ParserError
-       halt 400, { error: 'Invalid JSON' }.to_json
-     end 
- 
-     key = params['license_key']
-     
-     # Busca a licença pela chave fornecida
-     license_result = $db.exec_params("SELECT id FROM licenses WHERE license_key = $1 LIMIT 1", [key])
-     
-     if license_result.num_tuples.zero?
-       status 404
-       return { status: 'failed', message: 'Chave de licença não encontrada.' }.to_json
-     end
+    content_type :json
+    begin
+      params = JSON.parse(request.body.read)
+    rescue JSON::ParserError
+      halt 400, { error: 'Invalid JSON' }.to_json
+    end
+
+    key = params['license_key']
+    requesting_mac = params['mac_address'] # Recebe o MAC de quem está a pedir
+
+    unless requesting_mac
+        halt 400, { status: 'failed', message: 'MAC address do requerente em falta.' }.to_json
+    end
+
+    # Busca a licença E o MAC que está guardado nela
+    license_info = $db.exec_params("SELECT id, mac_address FROM licenses WHERE license_key = $1 LIMIT 1", [key]).first
     
-     license_id = license_result.first['id']
+    unless license_info
+      status 404
+      return { status: 'failed', message: 'Chave de licença não encontrada.' }.to_json
+    end
     
-     # Chama o método que já existe no seu model para limpar o MAC Address
-     License.unlink_mac(license_id)
+    stored_mac = license_info['mac_address']
+
+    # --- A TRAVA DE SEGURANÇA ---
+    if stored_mac.nil?
+        return { status: 'failed', message: 'Esta licença não está vinculada a nenhuma máquina.' }.to_json
+    elsif stored_mac != requesting_mac
+        status 403 # Código de "Acesso Proibido"
+        return { status: 'failed', message: 'A desvinculação só pode ser feita a partir da máquina atualmente vinculada.' }.to_json
+    end
+    # --- FIM DA TRAVA ---
+
+    # Se passou na verificação, desvincula
+    License.unlink_mac(license_info['id'])
     
-     puts "[API] Máquina desvinculada com sucesso para a chave que começa com: #{key[0..8]}..."
-    
-     return { status: 'success', message: 'Máquina desvinculada com sucesso.' }.to_json
+    puts "[API SECURE] Máquina desvinculada com sucesso para a chave que começa com: #{key[0..8]}..."
+    return { status: 'success', message: 'Máquina desvinculada com sucesso.' }.to_json
  end
 
 
