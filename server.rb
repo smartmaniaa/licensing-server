@@ -189,7 +189,7 @@ post '/validate' do
 
     license_result = $db.exec_params("SELECT * FROM licenses WHERE license_key = $1 LIMIT 1", [key])
     if license_result.num_tuples.zero?
-      return { status: 'invalid', message: 'Chave de licença não encontrada.' }.to_json
+      return { status: 'invalid', message: 'Chave de licença não encontrada.', code: 'key_not_found' }.to_json
     end
     license = license_result.first
 
@@ -207,13 +207,17 @@ post '/validate' do
     )
 
     if entitlement_result.num_tuples.zero?
-      return { status: 'invalid', message: "Nenhum direito de uso ativo encontrado para este produto." }.to_json
+      return { 
+  status: 'invalid', 
+  message: "Nenhum direito de uso ativo encontrado para este produto.", 
+  code: 'entitlement_invalid' 
+}.to_json
     end
 
     if license['mac_address'].nil?
       $db.exec_params("UPDATE licenses SET mac_address = $1 WHERE id = $2", [mac, license['id']])
     elsif license['mac_address'] != mac
-      return { status: 'invalid', message: "Chave já vinculada a outro computador." }.to_json
+      return { status: 'invalid', message: "Chave já vinculada a outro computador.", code: 'mac_mismatch' }.to_json
     end
     
     # --- NOVA LÓGICA DE VERIFICAÇÃO DE VERSÃO E LINK ---
