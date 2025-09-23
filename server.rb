@@ -176,25 +176,31 @@ class SmartManiaaApp < Sinatra::Base
 
 
  get '/product_info/:sku' do
-   content_type :json
-   sku = params['sku']
-   
-   product_info = $db.exec_params(
-     "SELECT p.name, pp.purchase_link 
+  content_type :json
+  sku = params['sku']
+  
+  # Query atualizada para buscar também a duração do trial da família
+  product_info = $db.exec_params(
+    %q{
+      SELECT 
+        p.name, 
+        pp.purchase_link,
+        pfi.trial_duration_days
       FROM products p
       LEFT JOIN platform_products pp ON p.sku = pp.product_sku AND pp.platform = 'stripe'
-      WHERE p.sku = $1 LIMIT 1",
-     [sku]
-   ).first
-   
-   if product_info
-     product_info.to_json
-   else
-     halt 404, { error: "Produto não encontrado" }.to_json
-   end
- end
-
-
+      LEFT JOIN product_family_info pfi ON p.family = pfi.family_name
+      WHERE p.sku = $1 
+      LIMIT 1
+    },
+    [sku]
+  ).first
+  
+  if product_info
+    product_info.to_json
+  else
+    halt 404, { error: "Produto não encontrado" }.to_json
+  end
+end
 
  post '/validate' do
     content_type :json
