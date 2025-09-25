@@ -296,7 +296,7 @@ class SmartManiaaApp < Sinatra::Base
     response.to_json
   end
 
-  
+
   # --- ROTAS DE TESTE ---
   get '/admin/create_suite_test' do
     content_type :json
@@ -457,7 +457,8 @@ post '/admin/product/:sku' do
     name: params['name'], 
     family: params['family'],
     latest_version: params['latest_version'],
-    download_link: params['download_link'] # Adicione esta linha
+    download_link: params['download_link']
+    minimum_version: params['minimum_version'] # <-- Linha adicionada
   )
   Product.save_platform_product(sku: product_sku, platform: 'stripe', platform_id: params['platform_id'], link: params['purchase_link'])
   component_skus = params['component_skus'] || []

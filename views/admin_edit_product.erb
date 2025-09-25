@@ -49,6 +49,12 @@
         <label for="latest_version">Última Versão</label>
         <input type="text" id="latest_version" name="latest_version" value="<%= @product['latest_version'] %>">
       </div>
+      
+      <div class="form-group">
+        <label for="minimum_version">Versão Mínima Compatível (ex: 2.0.0)</label>
+        <input type="text" id="minimum_version" name="minimum_version" value="<%= @product['minimum_version'] %>">
+        <p class="help-text">Deixe como '0.0.0' (ou vazio) para não forçar a atualização.</p>
+      </div>
 
       <div class="form-group">
   <label for="download_link">Link de Download do Produto</label>
