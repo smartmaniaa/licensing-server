@@ -457,7 +457,7 @@ post '/admin/product/:sku' do
     name: params['name'], 
     family: params['family'],
     latest_version: params['latest_version'],
-    download_link: params['download_link']
+    download_link: params['download_link'],
     minimum_version: params['minimum_version'] # <-- Linha adicionada
   )
   Product.save_platform_product(sku: product_sku, platform: 'stripe', platform_id: params['platform_id'], link: params['purchase_link'])
