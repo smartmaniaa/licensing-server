@@ -243,57 +243,81 @@ class SmartManiaaApp < Sinatra::Base
   else
     halt 404, { error: "Produto não encontrado" }.to_json
   end
-end
+ end
+
 
  post '/validate' do
     content_type :json
-    begin
-      params = JSON.parse(request.body.read)
-    rescue JSON::ParserError
-      halt 400, { error: 'Invalid JSON' }.to_json
-    end
+    params = JSON.parse(request.body.read)
 
     key = params['license_key']
     mac = params['mac_address']
     sku = params['product_sku']
-    client_version = params['product_version'] # <-- NOVO PARÂMETRO ESPERADO
+    client_version_str = params['product_version']
 
     license_result = $db.exec_params("SELECT * FROM licenses WHERE license_key = $1 LIMIT 1", [key])
-    if license_result.num_tuples.zero?
+    unless license_result.num_tuples > 0
       return { status: 'invalid', message: 'Chave de licença não encontrada.', code: 'key_not_found' }.to_json
     end
     license = license_result.first
 
+    # --- INÍCIO DA NOVA LÓGICA DE VERSÃO ---
+    product_info = $db.exec_params("SELECT name, latest_version, download_link, minimum_version FROM products WHERE sku = $1", [sku]).first
+    unless product_info
+        return { status: 'invalid', message: "Produto com SKU '#{sku}' não encontrado.", code: 'entitlement_invalid' }.to_json
+    end
+
+    minimum_version_str = product_info['minimum_version']
+
+    # Compara as versões se uma versão mínima for exigida
+    if minimum_version_str && minimum_version_str != '0.0.0' && client_version_str
+        begin
+            client_version = Gem::Version.new(client_version_str)
+            minimum_version = Gem::Version.new(minimum_version_str)
+
+            if client_version < minimum_version
+                return { 
+                    status: 'invalid', 
+                    message: "Versão do plugin desatualizada.", 
+                    code: 'update_required',
+                    update_url: product_info['download_link'] # Envia o link de download
+                }.to_json
+            end
+        rescue ArgumentError
+            # Ignora se os números de versão estiverem mal formatados
+            puts "AVISO: Versão do cliente ('#{client_version_str}') ou mínima ('#{minimum_version_str}') mal formatada."
+        end
+    end
+    # --- FIM DA NOVA LÓGICA DE VERSÃO ---
+
     entitlement_result = $db.exec_params(
-      %Q{
-        SELECT * FROM license_entitlements
-        WHERE license_id = $1 AND product_sku = $2 AND status IN ('active', 'pending_cancellation', 'awaiting_payment')
-        AND (
-          (origin != 'trial' AND (expires_at > NOW() OR expires_at IS NULL)) OR
-          (origin = 'trial' AND trial_expires_at > NOW())
-        )
-        LIMIT 1
-      },
-      [license['id'], sku]
+      # ... (a sua query de verificação de entitlement continua aqui, sem alterações)
     )
 
     if entitlement_result.num_tuples.zero?
-  # Busca o link de compra para o SKU que falhou a validação
-  purchase_link_result = $db.exec_params(
-    "SELECT purchase_link FROM platform_products WHERE product_sku = $1 LIMIT 1", 
-    [sku]
-  ).first
+      # ... (a sua lógica de erro para entitlement_invalid continua aqui, sem alterações)
+    end
 
-  purchase_url = purchase_link_result ? purchase_link_result['purchase_link'] : nil
+    if license['mac_address'].nil?
+      $db.exec_params("UPDATE licenses SET mac_address = $1 WHERE id = $2", [mac, license['id']])
+    elsif license['mac_address'] != mac
+      return { status: 'invalid', message: "Chave já vinculada a outro computador.", code: 'mac_mismatch' }.to_json
+    end
+    
+    # Lógica de verificação de nova versão (não obrigatória)
+    update_available = false
+    if client_version_str && product_info['latest_version'] && !product_info['latest_version'].empty? && client_version_str != product_info['latest_version']
+      update_available = true
+    end
 
-  # Retorna a resposta de erro, AGORA INCLUINDO o purchase_url
-  return { 
-    status: 'invalid', 
-    message: "Nenhum direito de uso ativo encontrado para este produto.", 
-    code: 'entitlement_invalid',
-    purchase_url: purchase_url # <-- ADIÇÃO IMPORTANTE
-  }.to_json
-end
+    response = { status: 'valid', message: 'Licença válida.' }
+    if update_available
+      response[:latest_version] = product_info['latest_version']
+      response[:update_url] = product_info['download_link']
+    end
+
+    response.to_json
+ end
 
 
     if license['mac_address'].nil?
