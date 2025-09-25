@@ -246,9 +246,15 @@ class SmartManiaaApp < Sinatra::Base
  end
 
 
- post '/validate' do
+ # Em server.rb, substitua a sua rota /validate por esta:
+
+post '/validate' do
     content_type :json
-    params = JSON.parse(request.body.read)
+    begin
+      params = JSON.parse(request.body.read)
+    rescue JSON::ParserError
+      halt 400, { error: 'Invalid JSON' }.to_json
+    end
 
     key = params['license_key']
     mac = params['mac_address']
@@ -261,7 +267,7 @@ class SmartManiaaApp < Sinatra::Base
     end
     license = license_result.first
 
-    # --- INÍCIO DA NOVA LÓGICA DE VERSÃO ---
+    # --- Lógica de Versão Obrigatória ---
     product_info = $db.exec_params("SELECT name, latest_version, download_link, minimum_version FROM products WHERE sku = $1", [sku]).first
     unless product_info
         return { status: 'invalid', message: "Produto com SKU '#{sku}' não encontrado.", code: 'entitlement_invalid' }.to_json
@@ -269,7 +275,6 @@ class SmartManiaaApp < Sinatra::Base
 
     minimum_version_str = product_info['minimum_version']
 
-    # Compara as versões se uma versão mínima for exigida
     if minimum_version_str && minimum_version_str != '0.0.0' && client_version_str
         begin
             client_version = Gem::Version.new(client_version_str)
@@ -280,22 +285,37 @@ class SmartManiaaApp < Sinatra::Base
                     status: 'invalid', 
                     message: "Versão do plugin desatualizada.", 
                     code: 'update_required',
-                    update_url: product_info['download_link'] # Envia o link de download
+                    update_url: product_info['download_link']
                 }.to_json
             end
         rescue ArgumentError
-            # Ignora se os números de versão estiverem mal formatados
             puts "AVISO: Versão do cliente ('#{client_version_str}') ou mínima ('#{minimum_version_str}') mal formatada."
         end
     end
-    # --- FIM DA NOVA LÓGICA DE VERSÃO ---
+    # --- Fim da Lógica de Versão ---
 
     entitlement_result = $db.exec_params(
-      # ... (a sua query de verificação de entitlement continua aqui, sem alterações)
+      %Q{
+        SELECT * FROM license_entitlements
+        WHERE license_id = $1 AND product_sku = $2 AND status IN ('active', 'pending_cancellation', 'awaiting_payment')
+        AND (
+          (origin != 'trial' AND (expires_at > NOW() OR expires_at IS NULL)) OR
+          (origin = 'trial' AND trial_expires_at > NOW())
+        )
+        LIMIT 1
+      },
+      [license['id'], sku]
     )
 
     if entitlement_result.num_tuples.zero?
-      # ... (a sua lógica de erro para entitlement_invalid continua aqui, sem alterações)
+      purchase_link_result = $db.exec_params("SELECT purchase_link FROM platform_products WHERE product_sku = $1 LIMIT 1", [sku]).first
+      purchase_url = purchase_link_result ? purchase_link_result['purchase_link'] : nil
+      return { 
+        status: 'invalid', 
+        message: "Nenhum direito de uso ativo encontrado para este produto.", 
+        code: 'entitlement_invalid',
+        purchase_url: purchase_url
+      }.to_json
     end
 
     if license['mac_address'].nil?
@@ -304,7 +324,6 @@ class SmartManiaaApp < Sinatra::Base
       return { status: 'invalid', message: "Chave já vinculada a outro computador.", code: 'mac_mismatch' }.to_json
     end
     
-    # Lógica de verificação de nova versão (não obrigatória)
     update_available = false
     if client_version_str && product_info['latest_version'] && !product_info['latest_version'].empty? && client_version_str != product_info['latest_version']
       update_available = true
@@ -317,7 +336,7 @@ class SmartManiaaApp < Sinatra::Base
     end
 
     response.to_json
- end
+end
 
 
     if license['mac_address'].nil?
