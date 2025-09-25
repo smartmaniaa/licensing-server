@@ -23,11 +23,12 @@ def self.create(sku:, name:, family:, latest_version:, download_link:)
   end
 end
 
-def self.update(sku:, name:, family:, latest_version:, download_link:)
+def self.update(sku:, name:, family:, latest_version:, download_link:, minimum_version:)
   begin
+    # SQL atualizado para incluir a nova coluna 'minimum_version'
     $db.exec_params(
-      'UPDATE products SET name = $1, family = $2, latest_version = $3, download_link = $4 WHERE sku = $5',
-      [name, family, latest_version, download_link, sku]
+      'UPDATE products SET name = $1, family = $2, latest_version = $3, download_link = $4, minimum_version = $5 WHERE sku = $6',
+      [name, family, latest_version, download_link, minimum_version, sku]
     )
     return true
   rescue PG::UniqueViolation => e
