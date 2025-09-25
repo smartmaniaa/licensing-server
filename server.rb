@@ -1,4 +1,4 @@
-# ---- server.rb (VERSÃO ABSOLUTAMENTE COMPLETA E FINAL) ----
+# ---- server.rb (VERSÃO CORRIGIDA E LIMPA) ----
 
 require 'sinatra/base'
 require 'pg'
@@ -86,20 +86,15 @@ class SmartManiaaApp < Sinatra::Base
       cleaned_number = params['phone_number'].gsub(/\D/, '')
       "#{country_code}#{cleaned_number}"
     end
-
   end
 
-  # Tornando o método de log acessível para outros módulos
   def self.log_event(level:, source:, message:, details: nil)
-   # A correção é feita aqui: convertendo o hash para JSON antes de escapar
    details_json = details ? details.to_json : nil
-  
-   # A linha abaixo já está usando a interpolação segura do PostgreSQL
    $db.exec_params(
      "INSERT INTO system_events (level, source, message, details) VALUES ($1, $2, $3, $4)",
      [level.to_s.upcase, source, message, details_json]
    )
- end
+  end
 
   # --- ROTAS PÚBLICAS ---
   get '/' do
@@ -147,7 +142,6 @@ class SmartManiaaApp < Sinatra::Base
 
     family_info = $db.exec_params("SELECT trial_duration_days FROM product_family_info WHERE family_name = $1", [family]).first
     trial_days = (family_info && family_info['trial_duration_days'].to_i > 0) ? family_info['trial_duration_days'].to_i : 7
-    puts "[TRIAL] Duração definida para #{trial_days} dia(s) para a família '#{family}'."
     
     family_skus = License.all_family_skus(family)
     expires_at = (Time.now + trial_days * 24 * 60 * 60)
@@ -159,7 +153,6 @@ class SmartManiaaApp < Sinatra::Base
     )
     puts "[TRIAL] Sucesso: Trial iniciado para '#{email}' no MAC '#{mac_address}'."
     
-    # --- INÍCIO DA CORREÇÃO ---
     license = $db.exec_params("SELECT id, family FROM licenses WHERE license_key = $1", [key]).first
     License.log_platform_event(
       event_type: 'trial_started',
@@ -169,14 +162,11 @@ class SmartManiaaApp < Sinatra::Base
       source_system: 'start_trial_route',
       details: { payload_details: params }
     )
-    # --- FIM DA CORREÇÃO ---
 
     { license_key: key, status: "trial_started", expires_at: expires_at }.to_json
   end
 
- # Em server.rb, substitua a rota /unlink_machine por esta:
-
- post '/unlink_machine' do
+  post '/unlink_machine' do
     content_type :json
     begin
       params = JSON.parse(request.body.read)
@@ -185,13 +175,12 @@ class SmartManiaaApp < Sinatra::Base
     end
 
     key = params['license_key']
-    requesting_mac = params['mac_address'] # Recebe o MAC de quem está a pedir
+    requesting_mac = params['mac_address']
 
     unless requesting_mac
         halt 400, { status: 'failed', message: 'MAC address do requerente em falta.' }.to_json
     end
 
-    # Busca a licença E o MAC que está guardado nela
     license_info = $db.exec_params("SELECT id, mac_address FROM licenses WHERE license_key = $1 LIMIT 1", [key]).first
     
     unless license_info
@@ -201,53 +190,42 @@ class SmartManiaaApp < Sinatra::Base
     
     stored_mac = license_info['mac_address']
 
-    # --- A TRAVA DE SEGURANÇA ---
     if stored_mac.nil?
         return { status: 'failed', message: 'Esta licença não está vinculada a nenhuma máquina.' }.to_json
     elsif stored_mac != requesting_mac
-        status 403 # Código de "Acesso Proibido"
+        status 403
         return { status: 'failed', message: 'A desvinculação só pode ser feita a partir da máquina atualmente vinculada.' }.to_json
     end
-    # --- FIM DA TRAVA ---
 
-    # Se passou na verificação, desvincula
     License.unlink_mac(license_info['id'])
     
     puts "[API SECURE] Máquina desvinculada com sucesso para a chave que começa com: #{key[0..8]}..."
     return { status: 'success', message: 'Máquina desvinculada com sucesso.' }.to_json
- end
-
-
- get '/product_info/:sku' do
-  content_type :json
-  sku = params['sku']
-  
-  # Query atualizada para buscar também a duração do trial da família
-  product_info = $db.exec_params(
-    %q{
-      SELECT 
-        p.name, 
-        pp.purchase_link,
-        pfi.trial_duration_days
-      FROM products p
-      LEFT JOIN platform_products pp ON p.sku = pp.product_sku AND pp.platform = 'stripe'
-      LEFT JOIN product_family_info pfi ON p.family = pfi.family_name
-      WHERE p.sku = $1 
-      LIMIT 1
-    },
-    [sku]
-  ).first
-  
-  if product_info
-    product_info.to_json
-  else
-    halt 404, { error: "Produto não encontrado" }.to_json
   end
- end
 
-# Em server.rb, substitua a sua rota /validate por esta:
+  get '/product_info/:sku' do
+    content_type :json
+    sku = params['sku']
+    
+    product_info = $db.exec_params(
+      %q{
+        SELECT p.name, pp.purchase_link, pfi.trial_duration_days
+        FROM products p
+        LEFT JOIN platform_products pp ON p.sku = pp.product_sku AND pp.platform = 'stripe'
+        LEFT JOIN product_family_info pfi ON p.family = pfi.family_name
+        WHERE p.sku = $1 LIMIT 1
+      },
+      [sku]
+    ).first
+    
+    if product_info
+      product_info.to_json
+    else
+      halt 404, { error: "Produto não encontrado" }.to_json
+    end
+  end
 
-post '/validate' do
+  post '/validate' do
     content_type :json
     begin
       params = JSON.parse(request.body.read)
@@ -266,14 +244,12 @@ post '/validate' do
     end
     license = license_result.first
 
-    # --- Lógica de Versão Obrigatória ---
     product_info_res = $db.exec_params("SELECT name, latest_version, download_link, minimum_version FROM products WHERE sku = $1", [sku]).first
     unless product_info_res
         return { status: 'invalid', message: "Produto com SKU '#{sku}' não encontrado.", code: 'entitlement_invalid' }.to_json
     end
 
     minimum_version_str = product_info_res['minimum_version']
-
     if minimum_version_str && minimum_version_str != '0.0.0' && client_version_str
         begin
             if Gem::Version.new(client_version_str) < Gem::Version.new(minimum_version_str)
@@ -288,30 +264,16 @@ post '/validate' do
             puts "AVISO: Versão do cliente ('#{client_version_str}') ou mínima ('#{minimum_version_str}') mal formatada."
         end
     end
-    # --- Fim da Lógica de Versão ---
 
     entitlement_result = $db.exec_params(
-      %Q{
-        SELECT 1 FROM license_entitlements
-        WHERE license_id = $1 AND product_sku = $2 AND status IN ('active', 'pending_cancellation', 'awaiting_payment')
-        AND (
-          (origin != 'trial' AND (expires_at > NOW() OR expires_at IS NULL)) OR
-          (origin = 'trial' AND trial_expires_at > NOW())
-        )
-        LIMIT 1
-      },
+      "SELECT 1 FROM license_entitlements WHERE license_id = $1 AND product_sku = $2 AND status IN ('active', 'pending_cancellation', 'awaiting_payment') AND ((origin != 'trial' AND (expires_at > NOW() OR expires_at IS NULL)) OR (origin = 'trial' AND trial_expires_at > NOW())) LIMIT 1",
       [license['id'], sku]
     )
 
     if entitlement_result.num_tuples.zero?
       purchase_link_res = $db.exec_params("SELECT purchase_link FROM platform_products WHERE product_sku = $1 LIMIT 1", [sku]).first
       purchase_url = purchase_link_res ? purchase_link_res['purchase_link'] : nil
-      return { 
-        status: 'invalid', 
-        message: "Nenhum direito de uso ativo encontrado para este produto.", 
-        code: 'entitlement_invalid',
-        purchase_url: purchase_url
-      }.to_json
+      return { status: 'invalid', message: "Nenhum direito de uso ativo encontrado para este produto.", code: 'entitlement_invalid', purchase_url: purchase_url }.to_json
     end
 
     if license['mac_address'].nil?
@@ -332,31 +294,8 @@ post '/validate' do
     end
 
     response.to_json
-end
-    
-    # --- NOVA LÓGICA DE VERIFICAÇÃO DE VERSÃO E LINK ---
-    product_info = Product.find(sku)
-    
-    update_available = false
-    latest_version = product_info['latest_version']
-    
-    if client_version && latest_version && !latest_version.empty? && client_version != latest_version
-      update_available = true
-    end
-
-    # Monta a resposta final
-    response = {
-      status: 'valid',
-      message: 'Licença válida.'
-    }
-    
-    if update_available
-      response[:latest_version] = latest_version
-      response[:update_url] = product_info['download_link']
-    end
-
-    response.to_json
   end
+
   
   # --- ROTAS DE TESTE ---
   get '/admin/create_suite_test' do
