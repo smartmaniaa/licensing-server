@@ -113,16 +113,35 @@ class SmartManiaaApp < Sinatra::Base
 
   post '/start_trial' do
     content_type :json
-    begin
-      params = JSON.parse(request.body.read)
-    rescue JSON::ParserError
-      halt 400, { error: 'Invalid JSON' }.to_json
-    end
+    params = JSON.parse(request.body.read)
 
     email = params['email']
     mac_address = params['mac_address']
     product_sku = params['product_sku']
+    client_version_str = params['product_version'] # <-- Recebe a versão do cliente
     phone = params['phone']
+
+    # --- INÍCIO DA LÓGICA DE VERSÃO (COPIADA DA ROTA /validate) ---
+    product_info = $db.exec_params("SELECT download_link, minimum_version FROM products WHERE sku = $1", [product_sku]).first
+    unless product_info
+        return { status: 'invalid', message: "Produto com SKU '#{product_sku}' não encontrado.", code: 'entitlement_invalid' }.to_json
+    end
+
+    minimum_version_str = product_info['minimum_version']
+    if minimum_version_str && minimum_version_str != '0.0.0' && client_version_str
+        begin
+            if Gem::Version.new(client_version_str) < Gem::Version.new(minimum_version_str)
+                return { 
+                    status: 'invalid', 
+                    message: "Versão do plugin desatualizada.", 
+                    code: 'update_required',
+                    update_url: product_info['download_link']
+                }.to_json
+            end
+        rescue ArgumentError
+            puts "AVISO: Versão do cliente ('#{client_version_str}') ou mínima ('#{minimum_version_str}') mal formatada."
+        end
+    end
 
     family = License.find_family_by_sku(product_sku)
     unless family
