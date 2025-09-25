@@ -245,8 +245,7 @@ class SmartManiaaApp < Sinatra::Base
   end
  end
 
-
- # Em server.rb, substitua a sua rota /validate por esta:
+# Em server.rb, substitua a sua rota /validate por esta:
 
 post '/validate' do
     content_type :json
@@ -268,24 +267,21 @@ post '/validate' do
     license = license_result.first
 
     # --- Lógica de Versão Obrigatória ---
-    product_info = $db.exec_params("SELECT name, latest_version, download_link, minimum_version FROM products WHERE sku = $1", [sku]).first
-    unless product_info
+    product_info_res = $db.exec_params("SELECT name, latest_version, download_link, minimum_version FROM products WHERE sku = $1", [sku]).first
+    unless product_info_res
         return { status: 'invalid', message: "Produto com SKU '#{sku}' não encontrado.", code: 'entitlement_invalid' }.to_json
     end
 
-    minimum_version_str = product_info['minimum_version']
+    minimum_version_str = product_info_res['minimum_version']
 
     if minimum_version_str && minimum_version_str != '0.0.0' && client_version_str
         begin
-            client_version = Gem::Version.new(client_version_str)
-            minimum_version = Gem::Version.new(minimum_version_str)
-
-            if client_version < minimum_version
+            if Gem::Version.new(client_version_str) < Gem::Version.new(minimum_version_str)
                 return { 
                     status: 'invalid', 
                     message: "Versão do plugin desatualizada.", 
                     code: 'update_required',
-                    update_url: product_info['download_link']
+                    update_url: product_info_res['download_link']
                 }.to_json
             end
         rescue ArgumentError
@@ -296,7 +292,7 @@ post '/validate' do
 
     entitlement_result = $db.exec_params(
       %Q{
-        SELECT * FROM license_entitlements
+        SELECT 1 FROM license_entitlements
         WHERE license_id = $1 AND product_sku = $2 AND status IN ('active', 'pending_cancellation', 'awaiting_payment')
         AND (
           (origin != 'trial' AND (expires_at > NOW() OR expires_at IS NULL)) OR
@@ -308,8 +304,8 @@ post '/validate' do
     )
 
     if entitlement_result.num_tuples.zero?
-      purchase_link_result = $db.exec_params("SELECT purchase_link FROM platform_products WHERE product_sku = $1 LIMIT 1", [sku]).first
-      purchase_url = purchase_link_result ? purchase_link_result['purchase_link'] : nil
+      purchase_link_res = $db.exec_params("SELECT purchase_link FROM platform_products WHERE product_sku = $1 LIMIT 1", [sku]).first
+      purchase_url = purchase_link_res ? purchase_link_res['purchase_link'] : nil
       return { 
         status: 'invalid', 
         message: "Nenhum direito de uso ativo encontrado para este produto.", 
@@ -325,25 +321,18 @@ post '/validate' do
     end
     
     update_available = false
-    if client_version_str && product_info['latest_version'] && !product_info['latest_version'].empty? && client_version_str != product_info['latest_version']
+    if client_version_str && product_info_res['latest_version'] && !product_info_res['latest_version'].empty? && client_version_str != product_info_res['latest_version']
       update_available = true
     end
 
     response = { status: 'valid', message: 'Licença válida.' }
     if update_available
-      response[:latest_version] = product_info['latest_version']
-      response[:update_url] = product_info['download_link']
+      response[:latest_version] = product_info_res['latest_version']
+      response[:update_url] = product_info_res['download_link']
     end
 
     response.to_json
 end
-
-
-    if license['mac_address'].nil?
-      $db.exec_params("UPDATE licenses SET mac_address = $1 WHERE id = $2", [mac, license['id']])
-    elsif license['mac_address'] != mac
-      return { status: 'invalid', message: "Chave já vinculada a outro computador.", code: 'mac_mismatch' }.to_json
-    end
     
     # --- NOVA LÓGICA DE VERIFICAÇÃO DE VERSÃO E LINK ---
     product_info = Product.find(sku)
