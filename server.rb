@@ -185,6 +185,64 @@ class SmartManiaaApp < Sinatra::Base
     { license_key: key, status: "trial_started", expires_at: expires_at }.to_json
   end
 
+  # --- ROTA PARA SOLICITAR A DESVINCULAÇÃO ---
+post '/request_unlink' do
+  content_type :json
+  params = JSON.parse(request.body.read)
+  key = params['license_key']
+  
+  license = $db.exec_params("SELECT id, email FROM licenses WHERE license_key = $1", [key]).first
+  
+  if license
+    # Se a chave existe, retorna o e-mail (mascarado) para o cliente confirmar.
+    email = license['email']
+    masked_email = "#{email[0..2]}...#{email.split('@').last}"
+    return { status: 'key_found', email_hint: masked_email, actual_email: email }.to_json # Enviamos o email real para validação no lado do cliente
+  else
+    return { status: 'key_not_found' }.to_json
+  end
+end
+
+
+ # --- ROTA PARA GERAR O TOKEN E ENVIAR O E-MAIL ---
+ post '/send_unlink_email' do
+   content_type :json
+   params = JSON.parse(request.body.read)
+   key = params['license_key'] 
+
+   license_id_res = $db.exec_params("SELECT id FROM licenses WHERE license_key = $1", [key])
+   return { status: 'error' }.to_json if license_id_res.num_tuples.zero?
+   license_id = license_id_res.first['id']
+  
+   token = SecureRandom.hex(32)
+   expires_at = Time.now + (24 * 3600) # Token expira em 24 horas
+
+   $db.exec_params("UPDATE licenses SET unlink_token = $1, unlink_token_expires_at = $2 WHERE id = $3", [token, expires_at, license_id])
+   
+   # Lógica para enviar o e-mail (você precisará criar um novo template no Mailer)
+   # Mailer.send_unlink_confirmation_email(to: email, token: token)
+   
+   puts "[UNLINK] Token de desvinculação gerado para a chave #{key}. E-mail de confirmação enviado."
+   return { status: 'email_sent' }.to_json
+ end
+
+
+ # --- ROTA ACESSADA PELO LINK NO E-MAIL ---
+ get '/confirm_unlink/:token' do
+   token = params['token']
+  
+   license = $db.exec_params("SELECT id FROM licenses WHERE unlink_token = $1 AND unlink_token_expires_at > NOW()", [token]).first
+  
+   if license
+     # Token válido, efetua a desvinculação
+     $db.exec_params("UPDATE licenses SET mac_address = NULL, unlink_token = NULL, unlink_token_expires_at = NULL WHERE id = $1", [license['id']])
+     return "<h1>Sucesso!</h1><p>Sua licença foi desvinculada com sucesso e agora pode ser ativada em um novo computador.</p>"
+   else
+     # Token inválido ou expirado
+     return "<h1>Erro!</h1><p>Este link de desvinculação é inválido ou já expirou. Por favor, solicite um novo a partir do seu plugin.</p>"
+   end
+ end
+
   post '/unlink_machine' do
     content_type :json
     begin
