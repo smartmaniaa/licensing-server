@@ -97,5 +97,26 @@ module Mailer
     end
   end
 
+  # --- NOVO MÉTODO PARA CONFIRMAR A DESVINCULAÇÃO ---
+  def self.send_unlink_confirmation_email(to_email:, token:, family:, server_base_url:)
+    # O server_base_url é necessário para construir o link completo
+    # Ex: https://licensing-server-1.onrender.com
+    confirmation_link = "#{server_base_url}/confirm_unlink/#{token}"
+
+    subject = "Confirmação de Desvinculação de Licença"
+    html_content = <<-HTML
+      <h1>Confirme sua Solicitação</h1>
+      <p>Olá,</p>
+      <p>Recebemos uma solicitação para desvincular sua licença da família de produtos '#{family.capitalize}' de um computador.</p>
+      <p>Para confirmar esta ação e liberar sua chave para ser usada em uma nova máquina, por favor, clique no link abaixo. Este link é válido por 24 horas.</p>
+      <p style="text-align: center; margin: 20px 0;">
+        <a href="#{confirmation_link}" style="background-color: #0078d4; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Confirmar Desvinculação</a>
+      </p>
+      <p>Se você não solicitou isso, pode ignorar este e-mail com segurança. Nenhuma ação será tomada.</p>
+      <p>Atenciosamente,<br>Equipe SmartManiaa</p>
+    HTML
+
+    send_email(to: to_email, subject: subject, content: html_content)
+  end
 
 end
