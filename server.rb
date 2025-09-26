@@ -185,70 +185,46 @@ class SmartManiaaApp < Sinatra::Base
     { license_key: key, status: "trial_started", expires_at: expires_at }.to_json
   end
 
- # --- ROTA PARA SOLICITAR A DESVINCULAÇÃO (COM DIAGNÓSTICO) ---
- post '/request_unlink' do
+ # --- ROTA ÚNICA E ROBUSTA PARA INICIAR A DESVINCULAÇÃO ---
+ post '/initiate_unlink' do
    content_type :json
    
-   # --- INÍCIO DO BLOCO DE DIAGNÓSTICO ---
-   puts "[DIAGNÓSTICO] A rota /request_unlink foi chamada."
-   body_content = request.body.read
-   puts "[DIAGNÓSTICO] Corpo da requisição recebido: #{body_content.inspect}"
-   request.body.rewind # Importante: "rebobina" o corpo para que possa ser lido novamente
-   # --- FIM DO BLOCO DE DIAGNÓSTICO ---
-   
-   # Adiciona um bloco 'begin/rescue' para capturar qualquer erro de parse
    begin
-     params = JSON.parse(body_content)
+     params = JSON.parse(request.body.read)
      key = params['license_key'].strip.upcase
-   rescue JSON::ParserError, NoMethodError
-     puts "[ERRO] Falha ao processar o corpo da requisição. Estava vazio ou mal formatado."
+     email_to_check = params['email'].strip.downcase
+   rescue
      return { status: 'bad_request' }.to_json
    end
    
-   license = $db.exec_params("SELECT id, email FROM licenses WHERE upper(license_key) = $1", [key]).first
-   
-   if license
-     email = license['email']
-     masked_email = email.gsub(/(?<=.).(?=[^@]*?@)|(?:(?<=@.)|(?!^)\G(?=[^@]*$)).(?=.*\.)/, '*')
-     return { status: 'key_found', email_hint: masked_email, actual_email: email }.to_json
-   else
-     puts "[INFO] Chave '#{key}' não encontrada no banco de dados."
+   # 1. Verifica se a chave existe
+   license = $db.exec_params("SELECT id, email, family FROM licenses WHERE upper(license_key) = $1", [key]).first
+   unless license
      return { status: 'key_not_found' }.to_json
    end
- end
-
-
- # --- ROTA PARA GERAR O TOKEN E ENVIAR O E-MAIL (VERSÃO FINAL) ---
- post '/send_unlink_email' do
-   content_type :json
-   params = JSON.parse(request.body.read)
-   key = params['license_key'] 
-
-   # 1. Busca o ID, o e-mail e a família da licença.
-   license = $db.exec_params("SELECT id, email, family FROM licenses WHERE license_key = $1", [key]).first
-   return { status: 'error', message: 'Chave não encontrada.' }.to_json unless license
-  
+   
+   # 2. Verifica se o e-mail fornecido corresponde ao da licença
+   unless license['email'].downcase == email_to_check
+     return { status: 'email_mismatch' }.to_json
+   end
+   
+   # 3. Se tudo estiver correto, gera o token e envia o e-mail
    token = SecureRandom.hex(32)
-   expires_at = Time.now + (24 * 3600) # Token expira em 24 horas
+   expires_at = Time.now + (24 * 3600)
 
    $db.exec_params("UPDATE licenses SET unlink_token = $1, unlink_token_expires_at = $2 WHERE id = $3", [token, expires_at, license['id']])
-   
-   # 2. Constrói a URL base do servidor para o link no e-mail.
-   #    Isso garante que o link funcione tanto em desenvolvimento (localhost) quanto em produção.
+  
    server_base_url = "#{request.scheme}://#{request.host_with_port}"
 
-   # 3. Chama o novo método do Mailer com todas as informações necessárias.
    Mailer.send_unlink_confirmation_email(
      to_email: license['email'], 
      token: token, 
      family: license['family'],
      server_base_url: server_base_url
    )
-  
-   puts "[UNLINK] Token de desvinculação gerado para a chave #{key}. E-mail de confirmação enviado para #{license['email']}."
+   
    return { status: 'email_sent' }.to_json
  end
-
 
  # --- ROTA ACESSADA PELO LINK NO E-MAIL ---
  get '/confirm_unlink/:token' do
