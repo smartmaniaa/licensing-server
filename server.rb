@@ -185,23 +185,34 @@ class SmartManiaaApp < Sinatra::Base
     { license_key: key, status: "trial_started", expires_at: expires_at }.to_json
   end
 
- # --- ROTA PARA SOLICITAR A DESVINCULAÇÃO (VERSÃO ROBUSTA) ---
+ # --- ROTA PARA SOLICITAR A DESVINCULAÇÃO (COM DIAGNÓSTICO) ---
  post '/request_unlink' do
    content_type :json
-   params = JSON.parse(request.body.read)
    
-   # 1. "Limpa" a chave recebida: remove espaços e converte para maiúsculas.
-   key = params['license_key'].strip.upcase
+   # --- INÍCIO DO BLOCO DE DIAGNÓSTICO ---
+   puts "[DIAGNÓSTICO] A rota /request_unlink foi chamada."
+   body_content = request.body.read
+   puts "[DIAGNÓSTICO] Corpo da requisição recebido: #{body_content.inspect}"
+   request.body.rewind # Importante: "rebobina" o corpo para que possa ser lido novamente
+   # --- FIM DO BLOCO DE DIAGNÓSTICO ---
    
-   # 2. Na consulta SQL, converte a chave do banco de dados para maiúsculas antes de comparar.
+   # Adiciona um bloco 'begin/rescue' para capturar qualquer erro de parse
+   begin
+     params = JSON.parse(body_content)
+     key = params['license_key'].strip.upcase
+   rescue JSON::ParserError, NoMethodError
+     puts "[ERRO] Falha ao processar o corpo da requisição. Estava vazio ou mal formatado."
+     return { status: 'bad_request' }.to_json
+   end
+   
    license = $db.exec_params("SELECT id, email FROM licenses WHERE upper(license_key) = $1", [key]).first
    
    if license
      email = license['email']
-     # Oculta parte do e-mail para a confirmação do usuário.
      masked_email = email.gsub(/(?<=.).(?=[^@]*?@)|(?:(?<=@.)|(?!^)\G(?=[^@]*$)).(?=.*\.)/, '*')
      return { status: 'key_found', email_hint: masked_email, actual_email: email }.to_json
    else
+     puts "[INFO] Chave '#{key}' não encontrada no banco de dados."
      return { status: 'key_not_found' }.to_json
    end
  end
