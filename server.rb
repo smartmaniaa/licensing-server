@@ -299,28 +299,45 @@ post '/unlink_machine' do
     return { status: 'success', message: 'Máquina desvinculada com sucesso.' }.to_json
   end
 
+# Arquivo: server.rb
+
 get '/product_info/:sku' do
-    api_authenticated! # <-- SEGURANÇA NA PORTA
-    content_type :json
-    sku = params['sku']
-    
-    product_info = $db.exec_params(
-      %q{
-        SELECT p.name, pp.purchase_link, pfi.trial_duration_days
-        FROM products p
-        LEFT JOIN platform_products pp ON p.sku = pp.product_sku AND pp.platform = 'stripe'
-        LEFT JOIN product_family_info pfi ON p.family = pfi.family_name
-        WHERE p.sku = $1 LIMIT 1
-      },
-      [sku]
-    ).first
-    
-    if product_info
-      product_info.to_json
-    else
-      halt 404, { error: "Produto não encontrado" }.to_json
-    end
+  api_authenticated!
+  content_type :json
+  sku = params['sku']
+
+  # Passo 1: Busca as informações básicas do produto.
+  product_info = $db.exec_params(
+    "SELECT name, family FROM products WHERE sku = $1 LIMIT 1",
+    [sku]
+  ).first
+
+  unless product_info
+    halt 404, { error: "Produto não encontrado" }.to_json
   end
+
+  # Passo 2: Busca as informações da plataforma (link de compra) separadamente.
+  platform_info = $db.exec_params(
+    "SELECT purchase_link FROM platform_products WHERE product_sku = $1 AND platform = 'stripe' LIMIT 1",
+    [sku]
+  ).first
+
+  # Passo 3: Busca as informações da família (dias de trial) separadamente.
+  family_info = $db.exec_params(
+    "SELECT trial_duration_days FROM product_family_info WHERE family_name = $1 LIMIT 1",
+    [product_info['family']]
+  ).first
+
+  # Passo 4: Junta todas as informações encontradas em um único objeto de resposta.
+  # Usamos .merge para adicionar os novos campos. Se platform_info ou family_info
+  # forem nulos, a união não fará nada, o que é seguro.
+  response_data = product_info
+  response_data.merge!(platform_info) if platform_info
+  response_data.merge!(family_info) if family_info
+
+  # Envia a resposta completa para o plugin.
+  response_data.to_json
+end
 
 post '/validate' do
     api_authenticated! # <-- SEGURANÇA NA PORTA
