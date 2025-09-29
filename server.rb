@@ -77,6 +77,22 @@ class SmartManiaaApp < Sinatra::Base
       @auth.provided? and @auth.basic? and @auth.credentials and @auth.credentials == [ENV['ADMIN_USER'], ENV['ADMIN_PASSWORD']]
     end
 
+    def api_authenticated!
+      # 1. Pega a chave secreta que guardamos nas variáveis de ambiente do Render.
+      secret_api_key = ENV['SMARTMANIAA_API_KEY']
+      
+      # 2. Pega a chave que o plugin enviou no cabeçalho.
+      #    Em Sinatra, cabeçalhos como 'X-API-Key' são acessados assim:
+      client_api_key = request.env['HTTP_X_API_KEY']
+
+      # 3. Verifica se a chave do cliente não existe ou se é diferente da nossa chave secreta.
+      #    A comparação usa um método seguro para evitar ataques de tempo.
+      unless client_api_key && secret_api_key && ActiveSupport::SecurityUtils.secure_compare(client_api_key, secret_api_key)
+        # 4. Se a chave for inválida, barra a requisição imediatamente.
+        halt 401, { error: 'Unauthorized' }.to_json
+      end
+    end
+
     def build_phone_from_params(params)
       return nil unless params['phone_number'] && !params['phone_number'].strip.empty?
       country_code = params['country_code']
@@ -112,6 +128,7 @@ class SmartManiaaApp < Sinatra::Base
   end
 
   post '/start_trial' do
+    api_authenticated! # <-- SEGURANÇA NA PORTA
     content_type :json
     params = JSON.parse(request.body.read)
 
@@ -186,7 +203,8 @@ class SmartManiaaApp < Sinatra::Base
   end
 
  # --- ROTA ÚNICA E ROBUSTA PARA INICIAR A DESVINCULAÇÃO ---
- post '/initiate_unlink' do
+post '/initiate_unlink' do
+   api_authenticated! # <-- SEGURANÇA NA PORTA
    content_type :json
    
    begin
@@ -242,7 +260,8 @@ class SmartManiaaApp < Sinatra::Base
    end
  end
 
-  post '/unlink_machine' do
+post '/unlink_machine' do
+    api_authenticated! # <-- SEGURANÇA NA PORTA
     content_type :json
     begin
       params = JSON.parse(request.body.read)
@@ -279,7 +298,8 @@ class SmartManiaaApp < Sinatra::Base
     return { status: 'success', message: 'Máquina desvinculada com sucesso.' }.to_json
   end
 
-  get '/product_info/:sku' do
+get '/product_info/:sku' do
+    api_authenticated! # <-- SEGURANÇA NA PORTA
     content_type :json
     sku = params['sku']
     
@@ -301,7 +321,8 @@ class SmartManiaaApp < Sinatra::Base
     end
   end
 
-  post '/validate' do
+post '/validate' do
+    api_authenticated! # <-- SEGURANÇA NA PORTA
     content_type :json
     begin
       params = JSON.parse(request.body.read)
