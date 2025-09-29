@@ -1,3 +1,6 @@
+require 'bundler/setup'
+Bundler.require
+
 if defined?(Rack::Request) && Rack::Request.const_defined?(:ALLOWED_HOSTS)
   Rack::Request::ALLOWED_HOSTS.replace([/./]) # libera todos os hosts externos
 end
