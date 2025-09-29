@@ -303,6 +303,8 @@ post '/unlink_machine' do
 
 # Arquivo: server.rb
 
+# Arquivo: server.rb
+
 get '/product_info/:sku' do
   api_authenticated!
   content_type :json
