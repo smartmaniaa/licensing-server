@@ -301,41 +301,41 @@ post '/unlink_machine' do
 
 # Arquivo: server.rb
 
+# Arquivo: server.rb
+
 get '/product_info/:sku' do
   api_authenticated!
   content_type :json
   sku = params['sku']
-
-  # Passo 1: Busca as informações básicas do produto.
+  
+  # Passo 1: Busca as informações básicas do produto (nome e família).
   product_info = $db.exec_params(
     "SELECT name, family FROM products WHERE sku = $1 LIMIT 1",
     [sku]
   ).first
-
+  
   unless product_info
     halt 404, { error: "Produto não encontrado" }.to_json
   end
-
-  # Passo 2: Busca as informações da plataforma (link de compra) separadamente.
+  
+  # Passo 2: Busca o link de compra específico da tabela 'platform_products'.
   platform_info = $db.exec_params(
     "SELECT purchase_link FROM platform_products WHERE product_sku = $1 AND platform = 'stripe' LIMIT 1",
     [sku]
   ).first
-
-  # Passo 3: Busca as informações da família (dias de trial) separadamente.
+  
+  # Passo 3: Busca os dias de trial da tabela 'product_family_info'.
   family_info = $db.exec_params(
     "SELECT trial_duration_days FROM product_family_info WHERE family_name = $1 LIMIT 1",
     [product_info['family']]
   ).first
-
+  
   # Passo 4: Junta todas as informações encontradas em um único objeto de resposta.
-  # Usamos .merge para adicionar os novos campos. Se platform_info ou family_info
-  # forem nulos, a união não fará nada, o que é seguro.
   response_data = product_info
   response_data.merge!(platform_info) if platform_info
   response_data.merge!(family_info) if family_info
-
-  # Envia a resposta completa para o plugin.
+  
+  # Envia a resposta completa e correta para o plugin.
   response_data.to_json
 end
 
