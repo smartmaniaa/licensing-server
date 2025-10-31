@@ -166,10 +166,14 @@ class SmartManiaaApp < Sinatra::Base
       halt 404, { error: "Produto com SKU '#{product_sku}' não encontrado.", status: "invalid_sku" }.to_json
     end
 
-    if License.trial_exists?(email: email, mac_address: mac_address, family: family)
-      License.log_trial_denied(email: email, mac_address: mac_address, product_sku: product_sku, reason: "Trial já utilizado para este e-mail ou MAC na família #{family}")
-      puts "[TRIAL] Negado: Tentativa de novo trial para '#{email}' ou MAC '#{mac_address}' que já possui histórico."
+    # --- INÍCIO DA LÓGICA ATUALIZADA (Anti-Abuso) ---
+    # A verificação agora é focada apenas no MAC e na Família.
+    if License.trial_exists?(mac_address: mac_address, family: family)
+      License.log_trial_denied(email: email, mac_address: mac_address, product_sku: product_sku, reason: "Trial já utilizado para este MAC na família #{family}")
+      puts "[TRIAL] Negado: Tentativa de novo trial para o MAC '#{mac_address}' que já possui histórico (e-mail fornecido: '#{email}')."
       begin
+        # O e-mail de "trial negado" ainda é enviado para o e-mail que o usuário
+        # forneceu (seja ele real ou o "fantasma").
         License.send(:trigger_customer_email, trigger_event: 'trial_denied', family: family, to_email: email)
       rescue => e
         puts "[ALERTA] Falha ao enviar e-mail de trial negado: #{e.class} - #{e.message}"

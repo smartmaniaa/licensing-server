@@ -17,10 +17,19 @@ class License
     end
   end
 
-  def self.trial_exists?(email:, mac_address:, family:)
-    license_id_result = $db.exec_params("SELECT id FROM licenses WHERE (lower(email) = lower($1) OR mac_address = $2) AND lower(family) = lower($3) LIMIT 1", [email, mac_address, family])
+  # --- MÉTODO ATUALIZADO (Anti-Abuso) ---
+  # Agora verifica o MAC de origem e não precisa mais do e-mail
+  def self.trial_exists?(mac_address:, family:)
+    # Busca por um trial que TENHA SE ORIGINADO neste MAC, para esta família.
+    license_id_result = $db.exec_params(
+      "SELECT id FROM licenses WHERE originating_mac_address = $1 AND lower(family) = lower($2) LIMIT 1",
+      [mac_address, family]
+    )
+    
     return false if license_id_result.num_tuples.zero?
+    
     license_id = license_id_result[0]['id']
+    # Confirma que essa licença realmente tem um entitlement de 'trial'
     result = $db.exec_params("SELECT 1 FROM license_entitlements WHERE license_id = $1 AND origin = 'trial' LIMIT 1", [license_id])
     result.ntuples > 0
   end
@@ -33,6 +42,14 @@ class License
     conn.exec_params("UPDATE licenses SET phone = $1 WHERE id = $2", [phone, license_id]) if phone && !phone.empty?
     conn.exec_params("UPDATE licenses SET locale = $1 WHERE id = $2 AND locale IS NULL", [locale, license_id]) if locale
     conn.exec_params("UPDATE licenses SET mac_address = $1 WHERE id = $2 AND mac_address IS NULL", [mac_address, license_id]) if mac_address
+
+    # --- INÍCIO DA NOVA LÓGICA (Anti-Abuso) ---
+    # Se for um trial E a coluna de origem ainda estiver vazia, grave o MAC de origem.
+    # Isso só acontece uma vez e é imutável.
+    if origin == 'trial'
+      conn.exec_params("UPDATE licenses SET originating_mac_address = $1 WHERE id = $2 AND originating_mac_address IS NULL", [mac_address, license_id])
+    end
+    # --- FIM DA NOVA LÓGICA ---
 
     if was_new_license
       begin
